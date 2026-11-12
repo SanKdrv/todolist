@@ -2,6 +2,7 @@
 import { storeToRefs } from 'pinia'
 import { onMounted } from 'vue'
 
+import TaskItem from '@/components/TaskItem.vue'
 import { useTasksStore } from '@/stores/tasks'
 
 const tasksStore = useTasksStore()
@@ -29,7 +30,7 @@ function retry(): void {
         Мои задачи
       </h1>
       <p
-        v-if="!loading && !error && !isEmpty"
+        v-if="items.length > 0"
         class="task-count"
       >
         Всего задач: {{ total }}
@@ -37,7 +38,7 @@ function retry(): void {
     </div>
 
     <div
-      v-if="loading"
+      v-if="loading && items.length === 0"
       class="status-block"
       role="status"
       aria-live="polite"
@@ -50,7 +51,7 @@ function retry(): void {
     </div>
 
     <div
-      v-else-if="error"
+      v-else-if="error && items.length === 0"
       class="status-block status-error"
       role="alert"
     >
@@ -69,41 +70,68 @@ function retry(): void {
       </button>
     </div>
 
-    <div
-      v-else-if="isEmpty"
-      class="status-block"
-    >
-      <p class="status-title">
-        {{ isFiltered ? 'По выбранному фильтру задач нет' : 'Пока нет задач' }}
-      </p>
-      <p class="status-message">
-        {{
-          isFiltered
-            ? 'Попробуйте изменить фильтр или сбросить его.'
-            : 'Здесь появятся ваши задачи.'
-        }}
-      </p>
-    </div>
-
-    <ul
-      v-else
-      class="task-list"
-    >
-      <li
-        v-for="task in items"
-        :key="task.id"
-        class="task-item"
-        :class="{ 'is-completed': task.is_completed }"
+    <div v-else>
+      <div
+        v-if="loading"
+        class="status-inline"
+        role="status"
+        aria-live="polite"
       >
         <span
-          class="task-dot"
+          class="status-spinner status-spinner-small"
           aria-hidden="true"
         />
-        <span class="task-title">{{ task.title }}</span>
-        <span class="visually-hidden">
-          {{ task.is_completed ? 'Выполнена' : 'Активна' }}
-        </span>
-      </li>
-    </ul>
+        <p>Обновляем список…</p>
+      </div>
+
+      <div
+        v-if="error"
+        class="status-block status-error status-inline"
+        role="alert"
+      >
+        <div class="status-inline-text">
+          <p class="status-title">
+            Не удалось обновить список
+          </p>
+          <p class="status-message">
+            {{ error.message }}
+          </p>
+        </div>
+        <button
+          type="button"
+          class="retry-button"
+          @click="retry"
+        >
+          Повторить
+        </button>
+      </div>
+
+      <div
+        v-if="isEmpty"
+        class="status-block"
+      >
+        <p class="status-title">
+          {{ isFiltered ? 'По выбранному фильтру задач нет' : 'Пока нет задач' }}
+        </p>
+        <p class="status-message">
+          {{
+            isFiltered
+              ? 'Попробуйте изменить фильтр или сбросить его.'
+              : 'Здесь появятся ваши задачи.'
+          }}
+        </p>
+      </div>
+
+      <ul
+        v-else
+        class="task-list"
+      >
+        <TaskItem
+          v-for="task in items"
+          :key="task.id"
+          :task="task"
+        />
+      </ul>
+    </div>
   </section>
 </template>

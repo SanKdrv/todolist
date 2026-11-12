@@ -464,6 +464,158 @@ describe('mutations', () => {
   })
 })
 
+describe('per-task mutation state', () => {
+  it('marks only the mutated task as pending', async () => {
+    const gate = deferred<Task>()
+    updateMock.mockReturnValueOnce(gate.promise)
+    listMock.mockResolvedValue(makeList())
+
+    const store = useTasksStore()
+    const mutation = store.updateTask(1, { title: 'renamed' })
+
+    expect(store.isTaskPending(1)).toBe(true)
+    expect(store.isTaskPending(2)).toBe(false)
+
+    gate.resolve(makeTask())
+    await mutation
+
+    expect(store.isTaskPending(1)).toBe(false)
+  })
+
+  it('keeps the task pending until the mutation refetch finishes', async () => {
+    const updateGate = deferred<Task>()
+    const listGate = deferred<TaskListResponse>()
+    updateMock.mockReturnValueOnce(updateGate.promise)
+    listMock.mockReturnValueOnce(listGate.promise)
+
+    const store = useTasksStore()
+    const mutation = store.updateTask(1, { title: 'renamed' })
+
+    updateGate.resolve(makeTask())
+    await vi.waitFor(() => expect(listMock).toHaveBeenCalledTimes(1))
+
+    expect(store.isTaskPending(1)).toBe(true)
+
+    listGate.resolve(makeList({ items: [makeTask()], total: 1 }))
+    await mutation
+
+    expect(store.isTaskPending(1)).toBe(false)
+  })
+
+  it('releases pending after a failed mutation', async () => {
+    const failure = new ApiError('update failed', 500)
+    updateMock.mockRejectedValueOnce(failure)
+    listMock.mockResolvedValue(makeList())
+
+    const store = useTasksStore()
+    await store.updateTask(1, { title: 'renamed' })
+
+    expect(store.isTaskPending(1)).toBe(false)
+    expect(store.mutationErrorFor(1)).toBe(failure)
+  })
+
+  it('does not write task mutation errors into the global error', async () => {
+    const loadFailure = new ApiError('list failed', 500)
+    listMock.mockRejectedValueOnce(loadFailure)
+
+    const store = useTasksStore()
+    await store.fetchTasks()
+    expect(store.error).toBe(loadFailure)
+
+    updateMock.mockRejectedValueOnce(new ApiError('toggle failed', 500))
+    await store.updateTask(1, { title: 'renamed' })
+
+    expect(store.error).toBe(loadFailure)
+    expect(store.mutationErrorFor(1)?.message).toBe('toggle failed')
+  })
+
+  it('clears a previous task error when the mutation is retried', async () => {
+    updateMock.mockRejectedValueOnce(new ApiError('first attempt', 500))
+    listMock.mockResolvedValue(makeList())
+
+    const store = useTasksStore()
+    await store.updateTask(1, { title: 'first' })
+    expect(store.mutationErrorFor(1)?.message).toBe('first attempt')
+
+    updateMock.mockResolvedValueOnce(makeTask())
+    await store.updateTask(1, { title: 'second' })
+
+    expect(store.mutationErrorFor(1)).toBeNull()
+  })
+
+  it('keeps errors of different tasks independent', async () => {
+    updateMock
+      .mockRejectedValueOnce(new ApiError('task 1 failed', 500))
+      .mockRejectedValueOnce(new ApiError('task 2 failed', 500))
+    listMock.mockResolvedValue(makeList())
+
+    const store = useTasksStore()
+    await store.updateTask(1, { title: 'a' })
+    await store.updateTask(2, { title: 'b' })
+
+    expect(store.mutationErrorFor(1)?.message).toBe('task 1 failed')
+    expect(store.mutationErrorFor(2)?.message).toBe('task 2 failed')
+  })
+
+  it('tracks pending state for parallel mutations independently', async () => {
+    const firstGate = deferred<Task>()
+    const secondGate = deferred<Task>()
+    updateMock.mockReturnValueOnce(firstGate.promise).mockReturnValueOnce(secondGate.promise)
+    listMock.mockResolvedValue(makeList())
+
+    const store = useTasksStore()
+    const first = store.updateTask(1, { title: 'a' })
+    const second = store.updateTask(2, { title: 'b' })
+
+    expect(store.isTaskPending(1)).toBe(true)
+    expect(store.isTaskPending(2)).toBe(true)
+    expect(store.mutating).toBe(true)
+
+    firstGate.resolve(makeTask({ id: 1 }))
+    await first
+
+    expect(store.isTaskPending(1)).toBe(false)
+    expect(store.isTaskPending(2)).toBe(true)
+
+    secondGate.resolve(makeTask({ id: 2 }))
+    await second
+
+    expect(store.isTaskPending(1)).toBe(false)
+    expect(store.isTaskPending(2)).toBe(false)
+    expect(store.mutating).toBe(false)
+  })
+
+  it('clears the mutation error of the deleted task after a successful retry', async () => {
+    deleteMock.mockRejectedValueOnce(new ApiError('delete failed', 500))
+    listMock.mockResolvedValue(makeList())
+
+    const store = useTasksStore()
+    await store.deleteTask(5)
+    expect(store.mutationErrorFor(5)?.message).toBe('delete failed')
+
+    deleteMock.mockResolvedValueOnce(undefined)
+    await store.deleteTask(5)
+
+    expect(store.mutationErrorFor(5)).toBeNull()
+  })
+
+  it('clearMutationError removes only the requested task error', async () => {
+    updateMock
+      .mockRejectedValueOnce(new ApiError('task 1 failed', 500))
+      .mockRejectedValueOnce(new ApiError('task 2 failed', 500))
+    listMock.mockResolvedValue(makeList())
+
+    const store = useTasksStore()
+    await store.updateTask(1, { title: 'a' })
+    await store.updateTask(2, { title: 'b' })
+
+    store.clearMutationError(1)
+
+    expect(store.mutationErrorFor(1)).toBeNull()
+    expect(store.mutationErrorFor(2)?.message).toBe('task 2 failed')
+  })
+})
+
 describe('races', () => {
   it('ignores a stale response that arrives after a newer one', async () => {
     const older = deferred<TaskListResponse>()

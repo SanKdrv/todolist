@@ -58,6 +58,12 @@ export const useTasksStore = defineStore('tasks', () => {
   const mutating = ref(false)
   const error = ref<ApiError | null>(null)
 
+  // Per-task mutation bookkeeping: which tasks are busy and why they failed.
+  // The global `error` is reserved for list loading; task mutation failures
+  // live here so one task's failure cannot hide the whole list.
+  const pendingTaskIds = ref<ReadonlySet<number>>(new Set())
+  const mutationErrors = ref<Partial<Record<number, ApiError>>>({})
+
   // Server's answer to "is there another page". Not derived from total,
   // because the API is the source of truth for has_more.
   const hasMore = ref(false)
@@ -71,6 +77,33 @@ export const useTasksStore = defineStore('tasks', () => {
 
   let fetchSequence = 0
   const pendingMutations = new Set<string>()
+
+  function isTaskPending(taskId: number): boolean {
+    return pendingTaskIds.value.has(taskId)
+  }
+
+  function mutationErrorFor(taskId: number): ApiError | null {
+    return mutationErrors.value[taskId] ?? null
+  }
+
+  function clearMutationError(taskId: number): void {
+    if (!(taskId in mutationErrors.value)) {
+      return
+    }
+    const next = { ...mutationErrors.value }
+    delete next[taskId]
+    mutationErrors.value = next
+  }
+
+  function setTaskPending(taskId: number, pending: boolean): void {
+    const next = new Set(pendingTaskIds.value)
+    if (pending) {
+      next.add(taskId)
+    } else {
+      next.delete(taskId)
+    }
+    pendingTaskIds.value = next
+  }
 
   async function fetchTasks(): Promise<void> {
     const sequence = ++fetchSequence
@@ -164,7 +197,11 @@ export const useTasksStore = defineStore('tasks', () => {
     await fetchTasks()
   }
 
-  async function runMutation(key: string, operation: () => Promise<void>): Promise<void> {
+  async function runMutation(
+    key: string,
+    operation: () => Promise<void>,
+    taskId?: number,
+  ): Promise<void> {
     if (pendingMutations.has(key)) {
       return
     }
@@ -172,14 +209,31 @@ export const useTasksStore = defineStore('tasks', () => {
     pendingMutations.add(key)
     mutating.value = true
 
+    if (taskId !== undefined) {
+      clearMutationError(taskId)
+      setTaskPending(taskId, true)
+    }
+
     try {
       await operation()
       await fetchTasks()
+      // A successful task mutation (including its refetch) clears the error;
+      // for a deleted task this also drops the stale entry.
+      if (taskId !== undefined) {
+        clearMutationError(taskId)
+      }
     } catch (reason: unknown) {
-      // Keep the current page intact; the user can retry the action.
-      error.value = toApiError(reason)
+      const normalized = toApiError(reason)
+      if (taskId !== undefined) {
+        mutationErrors.value = { ...mutationErrors.value, [taskId]: normalized }
+      } else {
+        error.value = normalized
+      }
     } finally {
       pendingMutations.delete(key)
+      if (taskId !== undefined) {
+        setTaskPending(taskId, false)
+      }
       mutating.value = pendingMutations.size > 0
     }
   }
@@ -191,9 +245,13 @@ export const useTasksStore = defineStore('tasks', () => {
   }
 
   async function updateTask(taskId: number, payload: TaskUpdate): Promise<void> {
-    await runMutation(`task:${taskId}`, async () => {
-      await updateTaskRequest(taskId, payload)
-    })
+    await runMutation(
+      `task:${taskId}`,
+      async () => {
+        await updateTaskRequest(taskId, payload)
+      },
+      taskId,
+    )
   }
 
   async function toggleTask(task: Task): Promise<void> {
@@ -201,9 +259,13 @@ export const useTasksStore = defineStore('tasks', () => {
   }
 
   async function deleteTask(taskId: number): Promise<void> {
-    await runMutation(`task:${taskId}`, async () => {
-      await deleteTaskRequest(taskId)
-    })
+    await runMutation(
+      `task:${taskId}`,
+      async () => {
+        await deleteTaskRequest(taskId)
+      },
+      taskId,
+    )
   }
 
   return {
@@ -223,6 +285,11 @@ export const useTasksStore = defineStore('tasks', () => {
     totalPages,
     isEmpty,
     isFiltered,
+    pendingTaskIds,
+    mutationErrors,
+    isTaskPending,
+    mutationErrorFor,
+    clearMutationError,
     fetchTasks,
     setStatusFilter,
     setPage,
