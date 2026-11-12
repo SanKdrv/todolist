@@ -17,5 +17,39 @@ services:
       timeout: 5s
       retries: 5
 
+  backend:
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: development
+      APP_DEBUG: "false"
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-taskflow}:${POSTGRES_PASSWORD:-taskflow}@db:5432/${POSTGRES_DB:-taskflow}
+      TEST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-taskflow}:${POSTGRES_PASSWORD:-taskflow}@db:5432/taskflow_test
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      # Same-origin for the browser: Vite proxies /api to the backend service.
+      VITE_PROXY_TARGET: http://backend:8000
+      # Docker Desktop on Windows does not deliver inotify events for bind
+      # mounts, so Vite needs polling for HMR here. Can be removed on Linux.
+      CHOKIDAR_USEPOLLING: "true"
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+
 volumes:
   postgres_data:
