@@ -199,6 +199,8 @@ npm run lint       # ESLint (Vue 3 + TypeScript, flat config)
 | Низкий | `updated_at` использует `now()` (время транзакции), а не `clock_timestamp()` | При необходимости точных меток |
 | Низкий | 401 не сбрасывает устаревшую cookie — браузер шлёт её до истечения `Max-Age` | Полировка перед сдачей |
 | Средний | Нет rate limiting для анонимных сессий | После frontend, перед публикацией |
+| Средний | CI/CD: GitHub Actions workflow для backend и frontend (lint, typecheck, tests, build). До восстановления доступности GitHub-hosted minutes проверять workflow локально через `act` при наличии Docker | После стабилизации frontend |
+| Средний | Frontend E2E на Selenium WebDriver: создание задачи, изменение статуса, редактирование, удаление, фильтры, пагинация и сохранение после перезагрузки в реальном браузере | После завершения UI |
 
 - Проверить планы запросов PostgreSQL (EXPLAIN ANALYZE) на выборке задач.
 - Проверить, что все CRUD-ответы и ошибки не раскрывают данные чужих сессий.

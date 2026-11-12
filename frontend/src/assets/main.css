@@ -113,3 +113,82 @@ select {
     padding: 1.25rem 1rem 2rem;
   }
 }
+
+/* Boot screen shown before the Vue app is mounted.
+   Kept in sync with the plain-DOM markup in src/main.ts. */
+
+.boot-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background-color: var(--color-bg);
+}
+
+.boot-card {
+  width: min(100%, 28rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  text-align: center;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.boot-spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: boot-spin 0.8s linear infinite;
+}
+
+.boot-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.boot-message {
+  color: var(--color-muted);
+}
+
+.boot-error-detail {
+  font-size: 0.875rem;
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+
+.boot-retry {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1.25rem;
+  color: #ffffff;
+  background-color: var(--color-accent);
+  border: none;
+  border-radius: var(--radius);
+}
+
+.boot-retry:hover:not(:disabled) {
+  background-color: var(--color-accent-hover);
+}
+
+.boot-retry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@keyframes boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-spinner {
+    animation-duration: 2.5s;
+  }
+}
