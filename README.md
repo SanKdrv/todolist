@@ -158,11 +158,30 @@ ruff format alembic/versions                           # keep generated files fo
 
 ## Frontend
 
+Нужен Node.js 24 (версия зафиксирована в `.nvmrc`).
+
 ```bash
+nvm use                 # в nvm-windows: nvm use 24
+
 cd frontend
-npm create vite@latest . -- --template vue-ts
-npm install
+npm ci
 npm run dev
+```
+
+Dev-сервер: http://localhost:5173
+
+Запросы к `/api` проксируются на `http://127.0.0.1:8000` (см. `vite.config.ts`),
+поэтому backend должен быть запущен отдельно — команды в разделе
+[Backend](#backend). Благодаря proxy браузер видит один origin, и HttpOnly
+cookie сессии работают без CORS.
+
+Проверки и сборка:
+
+```bash
+npm run build      # typecheck + production-сборка в dist/
+npm run typecheck  # vue-tsc
+npm test           # Vitest
+npm run lint       # ESLint (Vue 3 + TypeScript, flat config)
 ```
 
 ## Технический долг
@@ -179,7 +198,12 @@ npm run dev
 | Низкий | `PATCH` с пустым телом — no-op; поведение не описано в ТЗ | Уточнить на этапе frontend |
 | Низкий | `updated_at` использует `now()` (время транзакции), а не `clock_timestamp()` | При необходимости точных меток |
 | Низкий | 401 не сбрасывает устаревшую cookie — браузер шлёт её до истечения `Max-Age` | Полировка перед сдачей |
-| Средний | Нет rate limiting для анонимных сессий | После frontend, перед публикацией |
+| Средний | Нет rate limiting для API в целом — включая анонимные сессии и ресурсоёмкие операции (пагинированные списки, массовые мутации); риск перегрузки PostgreSQL при злоупотреблении или всплесках трафика | После frontend, перед публикацией |
+| Средний | CI/CD: GitHub Actions workflow для backend и frontend (lint, typecheck, tests, build). До восстановления доступности GitHub-hosted minutes проверять workflow локально через `act` при наличии Docker | После стабилизации frontend |
+| Средний | Frontend E2E на Selenium WebDriver: создание задачи, изменение статуса, редактирование, удаление, фильтры, пагинация и сохранение после перезагрузки в реальном браузере | После завершения UI |
+| Средний | Фильтры, сортировка и пагинация не синхронизированы с query-параметрами Vue Router | Этап интеграции UI с router |
+| Низкий | Нет optimistic updates: после каждой успешной мутации список перезапрашивается — осознанный выбор ради консистентности offset-пагинации | Можно оставить для MVP |
+| Низкий | Устаревшие ответы `fetchTasks()` отбрасываются по sequence, но HTTP-запросы не отменяются (нет AbortController) | Этап оптимизации после MVP |
 
 - Проверить планы запросов PostgreSQL (EXPLAIN ANALYZE) на выборке задач.
 - Проверить, что все CRUD-ответы и ошибки не раскрывают данные чужих сессий.
