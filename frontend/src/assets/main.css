@@ -478,6 +478,66 @@ select {
   cursor: default;
 }
 
+.tasks-toolbar {
+  margin-bottom: 1rem;
+}
+
+.filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.filter-button {
+  padding: 0.375rem 0.875rem;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+}
+
+.filter-button:hover {
+  border-color: var(--color-accent);
+}
+
+.filter-button[aria-pressed='true'] {
+  color: #ffffff;
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.page-button {
+  padding: 0.375rem 0.875rem;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.page-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.page-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.page-info {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
 .task-dot {
   flex: none;
   width: 0.5rem;

@@ -5,9 +5,28 @@ import { onMounted } from 'vue'
 import TaskForm from '@/components/TaskForm.vue'
 import TaskItem from '@/components/TaskItem.vue'
 import { useTasksStore } from '@/stores/tasks'
+import type { TaskStatus } from '@/types/task'
 
 const tasksStore = useTasksStore()
-const { items, total, loading, error, isEmpty, isFiltered } = storeToRefs(tasksStore)
+const {
+  items,
+  total,
+  loading,
+  error,
+  isEmpty,
+  isFiltered,
+  statusFilter,
+  currentPage,
+  totalPages,
+  hasPrevious,
+  hasMore,
+} = storeToRefs(tasksStore)
+
+const filterOptions: Array<{ value: TaskStatus; label: string }> = [
+  { value: 'all', label: 'Все' },
+  { value: 'active', label: 'Активные' },
+  { value: 'completed', label: 'Завершённые' },
+]
 
 onMounted(() => {
   void tasksStore.fetchTasks()
@@ -15,6 +34,24 @@ onMounted(() => {
 
 function retry(): void {
   void tasksStore.fetchTasks()
+}
+
+function selectFilter(status: TaskStatus): void {
+  void tasksStore.setStatusFilter(status)
+}
+
+function goPrevious(): void {
+  if (!hasPrevious.value || loading.value) {
+    return
+  }
+  void tasksStore.previousPage()
+}
+
+function goNext(): void {
+  if (!hasMore.value || loading.value) {
+    return
+  }
+  void tasksStore.nextPage()
 }
 </script>
 
@@ -39,6 +76,25 @@ function retry(): void {
     </div>
 
     <TaskForm />
+
+    <div class="tasks-toolbar">
+      <div
+        class="filter-group"
+        role="group"
+        aria-label="Фильтр задач"
+      >
+        <button
+          v-for="option in filterOptions"
+          :key="option.value"
+          type="button"
+          class="filter-button"
+          :aria-pressed="statusFilter === option.value"
+          @click="selectFilter(option.value)"
+        >
+          {{ option.label }}
+        </button>
+      </div>
+    </div>
 
     <div
       v-if="loading && items.length === 0"
@@ -136,5 +192,34 @@ function retry(): void {
         />
       </ul>
     </div>
+
+    <nav
+      v-if="total > 0"
+      class="pagination"
+      aria-label="Пагинация"
+    >
+      <button
+        type="button"
+        class="page-button"
+        :disabled="!hasPrevious || loading"
+        @click="goPrevious"
+      >
+        Назад
+      </button>
+      <p
+        class="page-info"
+        aria-live="polite"
+      >
+        Страница {{ currentPage }} из {{ totalPages }}
+      </p>
+      <button
+        type="button"
+        class="page-button"
+        :disabled="!hasMore || loading"
+        @click="goNext"
+      >
+        Вперёд
+      </button>
+    </nav>
   </section>
 </template>
