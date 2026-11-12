@@ -3,6 +3,10 @@ import { fileURLToPath, URL } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vitest/config'
 
+// Local runs keep the backend on localhost; Docker Compose overrides this
+// with VITE_PROXY_TARGET=http://backend:8000.
+const proxyTarget = process.env.VITE_PROXY_TARGET ?? 'http://127.0.0.1:8000'
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -18,7 +22,7 @@ export default defineConfig({
       // session cookie works without CORS. `changeOrigin` stays false on
       // purpose - the backend does not inspect the Host header.
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: proxyTarget,
         changeOrigin: false,
       },
     },
