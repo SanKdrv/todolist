@@ -1,22 +1,22 @@
 # TaskFlow
 
-Task management service: FastAPI backend + frontend, PostgreSQL, Docker Compose.
+Сервис управления задачами: backend на FastAPI + frontend, PostgreSQL, Docker Compose.
 
-## Structure
+## Структура
 
 ```
 taskflow/
 ├── backend/
 │   ├── app/
-│   │   ├── api/        # HTTP routers and endpoints
-│   │   ├── core/       # config, security, shared utilities
-│   │   ├── db/         # engine, session factory, declarative Base
-│   │   ├── models/     # SQLAlchemy ORM models
-│   │   ├── schemas/    # Pydantic schemas
-│   │   ├── services/   # business logic / data access
-│   │   └── main.py     # FastAPI app entrypoint
+│   │   ├── api/        # HTTP-роутеры и зависимости
+│   │   ├── core/       # конфигурация, безопасность, общие утилиты
+│   │   ├── db/         # engine, фабрика сессий, декларативный Base
+│   │   ├── models/     # ORM-модели SQLAlchemy
+│   │   ├── schemas/    # Pydantic-схемы
+│   │   ├── services/   # бизнес-логика и работа с БД
+│   │   └── main.py     # точка входа FastAPI
 │   ├── tests/
-│   ├── alembic/        # database migrations
+│   ├── alembic/        # миграции базы данных
 │   ├── alembic.ini
 │   └── pyproject.toml
 ├── frontend/
@@ -26,11 +26,11 @@ taskflow/
 └── README.md
 ```
 
-## Requirements
+## Требования
 
 - Python 3.12+
-- Docker (for PostgreSQL)
-- Node.js 20+ (for the frontend)
+- Docker (для PostgreSQL)
+- Node.js 20+ (для frontend)
 
 ## Backend
 
@@ -51,76 +51,78 @@ uvicorn app.main:app --reload
 - Docs: http://localhost:8000/docs
 - Health: http://localhost:8000/health
 
-## Tests
+## Тесты
 
 ```bash
 cd backend
 pytest
 ```
 
-## Database
+## База данных
 
-Two tables:
+Две таблицы:
 
-- `sessions` — anonymous browser session: `id` (uuid), `csrf_token`,
-  `created_at`, `last_activity_at`, `expires_at` (sliding TTL, indexed).
+- `sessions` — анонимная браузерная сессия: `id` (uuid), `csrf_token`,
+  `created_at`, `last_activity_at`, `expires_at` (скользящий TTL, индекс).
 - `tasks` — `id` (identity), `session_id` (FK, `ON DELETE CASCADE`), `title`,
   `description`, `is_completed`, `created_at`, `updated_at`.
 
-`ix_tasks_session_created (session_id, created_at, id)` serves list queries,
-pagination counts and the cascade lookup. A plain ASC index also covers
-`ORDER BY created_at DESC, id DESC` via a backward index scan.
+Индекс `ix_tasks_session_created (session_id, created_at, id)` обслуживает
+списки задач, подсчёт для пагинации и поиск по FK при каскадном удалении.
+Обычный ASC-индекс также покрывает `ORDER BY created_at DESC, id DESC`
+за счёт обратного сканирования индекса.
 
-## Sessions
+## Сессии
 
-Each browser gets an anonymous session; there is no auth. `GET /api/v1/session`
-returns the current session or creates a new one, and is the only place that
-issues the cookie.
+У каждого браузера своя анонимная сессия, авторизации нет. `GET /api/v1/session`
+возвращает текущую сессию или создаёт новую и является единственным местом,
+где выставляется cookie.
 
 ```
-cookie ──► parse uuid ──► SELECT ... WHERE expires_at > now()
-                              │ hit                    │ miss / expired / malformed
-                              ▼                        ▼
-                      touch if older than 1h     INSERT new session
-                              │                        │
-                              └────► Set-Cookie (only when new or touched)
+cookie ──► разбор uuid ──► SELECT ... WHERE expires_at > now()
+                                  │ найдена                │ нет / истёк / битая
+                                  ▼                        ▼
+                        продление, если прошло > 1 часа   INSERT новой сессии
+                                  │                        │
+                                  └────► Set-Cookie (только при создании или продлении)
 ```
 
-- TTL is a sliding 30 days: `last_activity_at` and `expires_at` move forward at
-  most once per hour (`SESSION_TOUCH_INTERVAL_MINUTES`).
-- Cookie `Max-Age` is computed from `expires_at`, so server expiry and browser
-  expiry cannot drift.
-- Cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain`; `Secure` and the
-  name (`tf_session` / `__Host-tf_session`) follow `APP_ENV`.
-- Expired sessions are rejected on every lookup; deletion is the cleanup job's
-  job (next stage), so an expired row can briefly outlive its usefulness.
-- `X-CSRF-Token` must match `sessions.csrf_token` on unsafe methods; the
-  dependency exists but is not attached until CRUD lands.
+- TTL скользящий, 30 дней: `last_activity_at` и `expires_at` сдвигаются вперёд
+  не чаще раза в час (`SESSION_TOUCH_INTERVAL_MINUTES`).
+- `Max-Age` cookie вычисляется из `expires_at`, поэтому срок жизни на сервере
+  и в браузере не может разойтись.
+- Cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, без `Domain`; `Secure` и имя
+  (`tf_session` / `__Host-tf_session`) определяются `APP_ENV`.
+- Просроченные сессии отсекаются при каждом обращении; удаление — задача
+  фоновой очистки (следующий этап), поэтому истёкшая запись может ненадолго
+  пережить свою полезность.
+- `X-CSRF-Token` должен совпадать с `sessions.csrf_token` для небезопасных
+  методов; зависимость подключена к `POST`, `PATCH` и `DELETE`.
 
-Two dependencies share one resolver (`_resolve_session`), so the TTL check is
-never duplicated:
+Обе зависимости используют один резолвер (`_resolve_session`), поэтому проверка
+TTL не дублируется:
 
-| Dependency | Used by | Missing / malformed / expired cookie |
+| Зависимость | Где используется | Нет cookie / битая / истекла |
 |---|---|---|
-| `get_session_context` | `GET /api/v1/session` (bootstrap) | creates a new session, `is_new: true` |
-| `get_current_session` | protected endpoints (future CRUD) | `401 {"detail": "Active session required"}` |
+| `get_session_context` | `GET /api/v1/session` (bootstrap) | создаёт новую сессию, `is_new: true` |
+| `get_current_session` | эндпоинты задач | `401 {"detail": "Active session required"}` |
 
-A rejected protected request never inserts a session row.
+Отклонённый защищённый запрос никогда не создаёт строку сессии.
 
 ## Pre-commit (Windows / PowerShell)
 
-Hooks are check-only: `ruff check` and `ruff format --check`. They never
-rewrite files, so a failed commit always requires an explicit fix and a new
-`git add` before retrying.
+Хуки работают в режиме проверки: `ruff check` и `ruff format --check`. Они
+никогда не переписывают файлы, поэтому неудачный commit всегда требует
+явного исправления и повторного `git add`.
 
 ```powershell
-# from the repository root
+# из корня репозитория
 cd backend
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 cd ..
 
-backend\.venv\Scripts\pre-commit.exe install        # writes .git/hooks/pre-commit
-backend\.venv\Scripts\pre-commit.exe run --all-files  # optional full run
+backend\.venv\Scripts\pre-commit.exe install        # создаёт .git/hooks/pre-commit
+backend\.venv\Scripts\pre-commit.exe run --all-files  # необязательный полный прогон
 ```
 
 Linux / macOS:
@@ -131,15 +133,16 @@ pre-commit install
 pre-commit run --all-files
 ```
 
-`pre-commit install` is a one-time step per clone. To refresh hook versions:
+`pre-commit install` выполняется один раз на клон. Чтобы обновить версии хуков:
 
 ```powershell
 backend\.venv\Scripts\pre-commit.exe autoupdate
 ```
 
-## Migrations
+## Миграции
 
-Schema changes go through Alembic only — `create_all` is never used outside tests.
+Изменения схемы выполняются только через Alembic — `create_all` не используется
+вне тестов.
 
 ```bash
 cd backend
@@ -147,11 +150,11 @@ alembic upgrade head                                   # apply
 alembic revision --autogenerate -m "add something"     # generate
 alembic check                                          # metadata vs migrations
 alembic downgrade -1                                   # roll back one step
-ruff format alembic/versions                            # keep generated files formatted
+ruff format alembic/versions                           # keep generated files formatted
 ```
 
-`env.py` takes the URL from `app.core.config.settings` (`DATABASE_URL`), so
-`alembic.ini` contains no credentials.
+`env.py` берёт URL из `app.core.config.settings` (`DATABASE_URL`), поэтому
+в `alembic.ini` нет учётных данных.
 
 ## Frontend
 
@@ -161,3 +164,22 @@ npm create vite@latest . -- --template vue-ts
 npm install
 npm run dev
 ```
+
+## Технический долг
+
+| Приоритет | Технический долг | Когда закрыть |
+|---|---|---|
+| Средний | `Cache-Control: no-store` для необработанных HTTP 500 | Перед финальной сдачей |
+| Низкий | Предупреждение Starlette TestClient о httpx / httpx2 | При настройке CI |
+| Средний | Очистка просроченных сессий | Этап фоновой очистки |
+| Низкий | Параллельное создание сессий может оставлять лишние записи | Можно оставить для MVP |
+| Низкий | Часы приложения вместо времени PostgreSQL при проверке TTL | При масштабировании |
+| Средний | Тесты создают схему через `metadata.create_all`, а не через Alembic | При настройке CI |
+| Средний | Offset-пагинация деградирует на больших объёмах, cursor pagination не реализована | Этап оптимизации после MVP |
+| Низкий | `PATCH` с пустым телом — no-op; поведение не описано в ТЗ | Уточнить на этапе frontend |
+| Низкий | `updated_at` использует `now()` (время транзакции), а не `clock_timestamp()` | При необходимости точных меток |
+| Низкий | 401 не сбрасывает устаревшую cookie — браузер шлёт её до истечения `Max-Age` | Полировка перед сдачей |
+| Средний | Нет rate limiting для анонимных сессий | После frontend, перед публикацией |
+
+- Проверить планы запросов PostgreSQL (EXPLAIN ANALYZE) на выборке задач.
+- Проверить, что все CRUD-ответы и ошибки не раскрывают данные чужих сессий.

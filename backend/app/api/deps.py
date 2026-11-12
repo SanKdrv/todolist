@@ -125,7 +125,8 @@ def require_csrf(
 ) -> None:
     """Reject unsafe requests without a valid session-bound CSRF token.
 
-    Not attached to any route yet - CRUD endpoints will depend on it.
+    Applied to POST, PATCH and DELETE through ``dependencies=[...]``.
+    Safe methods (GET) do not depend on it.
     """
     provided = request.headers.get(CSRF_HEADER)
     if not verify_csrf_token(session.csrf_token, provided):
