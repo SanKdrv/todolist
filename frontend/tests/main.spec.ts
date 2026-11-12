@@ -30,6 +30,19 @@ async function importApplication(getSession: GetSessionMock): Promise<HTMLElemen
   document.body.innerHTML = '<div id="app"></div>'
   vi.resetModules()
   vi.doMock('@/api/session', () => ({ getSession }))
+  // The mounted view fetches tasks on mount; keep bootstrap tests network-free.
+  vi.doMock('@/api/tasks', () => ({
+    createTask: vi.fn(),
+    deleteTask: vi.fn(),
+    listTasks: vi.fn().mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 20,
+      offset: 0,
+      has_more: false,
+    }),
+    updateTask: vi.fn(),
+  }))
 
   await import('@/main')
 
@@ -43,6 +56,7 @@ async function importApplication(getSession: GetSessionMock): Promise<HTMLElemen
 afterEach(() => {
   document.body.innerHTML = ''
   vi.doUnmock('@/api/session')
+  vi.doUnmock('@/api/tasks')
   vi.resetModules()
 })
 
