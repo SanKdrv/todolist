@@ -158,11 +158,30 @@ ruff format alembic/versions                           # keep generated files fo
 
 ## Frontend
 
+Нужен Node.js 24 (версия зафиксирована в `.nvmrc`).
+
 ```bash
+nvm use                 # в nvm-windows: nvm use 24
+
 cd frontend
-npm create vite@latest . -- --template vue-ts
-npm install
+npm ci
 npm run dev
+```
+
+Dev-сервер: http://localhost:5173
+
+Запросы к `/api` проксируются на `http://127.0.0.1:8000` (см. `vite.config.ts`),
+поэтому backend должен быть запущен отдельно — команды в разделе
+[Backend](#backend). Благодаря proxy браузер видит один origin, и HttpOnly
+cookie сессии работают без CORS.
+
+Проверки и сборка:
+
+```bash
+npm run build      # typecheck + production-сборка в dist/
+npm run typecheck  # vue-tsc
+npm test           # Vitest
+npm run lint       # ESLint (Vue 3 + TypeScript, flat config)
 ```
 
 ## Технический долг
