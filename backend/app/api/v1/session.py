@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends
 
 from app.api.deps import SessionContext, get_session_context
 from app.schemas.session import SessionRead
@@ -12,15 +12,13 @@ router = APIRouter(tags=["session"])
     summary="Get or create the anonymous browser session",
 )
 def read_session(
-    response: Response,
     context: SessionContext = Depends(get_session_context),
 ) -> SessionRead:
     """Return the caller's session, creating one when absent or expired.
 
-    The response must never be cached: it carries a CSRF token and may
-    silently create a new session.
+    This is the only endpoint that bootstraps a session. Caching is disabled
+    globally by ``NoStoreMiddleware``.
     """
-    response.headers["Cache-Control"] = "no-store"
     session = context.session
     return SessionRead(
         id=session.id,

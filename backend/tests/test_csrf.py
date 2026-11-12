@@ -1,7 +1,7 @@
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.deps import SessionContext, get_session_context, require_csrf
+from app.api.deps import get_current_session, require_csrf
 from app.core.security import generate_csrf_token, verify_csrf_token
 
 
@@ -27,10 +27,7 @@ def test_require_csrf_dependency(db_session) -> None:
     def protected(_: None = Depends(require_csrf)) -> dict[str, bool]:
         return {"ok": True}
 
-    app.dependency_overrides[get_session_context] = lambda: SessionContext(
-        session=session,
-        is_new=False,
-    )
+    app.dependency_overrides[get_current_session] = lambda: session
 
     with TestClient(app) as client:
         assert client.get("/protected").status_code == 403

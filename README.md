@@ -97,6 +97,46 @@ cookie ──► parse uuid ──► SELECT ... WHERE expires_at > now()
 - `X-CSRF-Token` must match `sessions.csrf_token` on unsafe methods; the
   dependency exists but is not attached until CRUD lands.
 
+Two dependencies share one resolver (`_resolve_session`), so the TTL check is
+never duplicated:
+
+| Dependency | Used by | Missing / malformed / expired cookie |
+|---|---|---|
+| `get_session_context` | `GET /api/v1/session` (bootstrap) | creates a new session, `is_new: true` |
+| `get_current_session` | protected endpoints (future CRUD) | `401 {"detail": "Active session required"}` |
+
+A rejected protected request never inserts a session row.
+
+## Pre-commit (Windows / PowerShell)
+
+Hooks are check-only: `ruff check` and `ruff format --check`. They never
+rewrite files, so a failed commit always requires an explicit fix and a new
+`git add` before retrying.
+
+```powershell
+# from the repository root
+cd backend
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+cd ..
+
+backend\.venv\Scripts\pre-commit.exe install        # writes .git/hooks/pre-commit
+backend\.venv\Scripts\pre-commit.exe run --all-files  # optional full run
+```
+
+Linux / macOS:
+
+```bash
+pip install -e "backend[dev]"
+pre-commit install
+pre-commit run --all-files
+```
+
+`pre-commit install` is a one-time step per clone. To refresh hook versions:
+
+```powershell
+backend\.venv\Scripts\pre-commit.exe autoupdate
+```
+
 ## Migrations
 
 Schema changes go through Alembic only — `create_all` is never used outside tests.

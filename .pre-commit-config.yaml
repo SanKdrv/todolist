@@ -1,0 +1,13 @@
+# Check-only hooks: they never rewrite files, so a failed commit always
+# requires an explicit fix + `git add` before retrying.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5
+    hooks:
+      - id: ruff
+        name: ruff check
+        files: ^backend/
+      - id: ruff-format
+        name: ruff format --check
+        args: [--check]
+        files: ^backend/
