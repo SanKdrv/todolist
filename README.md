@@ -71,6 +71,32 @@ Two tables:
 pagination counts and the cascade lookup. A plain ASC index also covers
 `ORDER BY created_at DESC, id DESC` via a backward index scan.
 
+## Sessions
+
+Each browser gets an anonymous session; there is no auth. `GET /api/v1/session`
+returns the current session or creates a new one, and is the only place that
+issues the cookie.
+
+```
+cookie ──► parse uuid ──► SELECT ... WHERE expires_at > now()
+                              │ hit                    │ miss / expired / malformed
+                              ▼                        ▼
+                      touch if older than 1h     INSERT new session
+                              │                        │
+                              └────► Set-Cookie (only when new or touched)
+```
+
+- TTL is a sliding 30 days: `last_activity_at` and `expires_at` move forward at
+  most once per hour (`SESSION_TOUCH_INTERVAL_MINUTES`).
+- Cookie `Max-Age` is computed from `expires_at`, so server expiry and browser
+  expiry cannot drift.
+- Cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain`; `Secure` and the
+  name (`tf_session` / `__Host-tf_session`) follow `APP_ENV`.
+- Expired sessions are rejected on every lookup; deletion is the cleanup job's
+  job (next stage), so an expired row can briefly outlive its usefulness.
+- `X-CSRF-Token` must match `sessions.csrf_token` on unsafe methods; the
+  dependency exists but is not attached until CRUD lands.
+
 ## Migrations
 
 Schema changes go through Alembic only — `create_all` is never used outside tests.
