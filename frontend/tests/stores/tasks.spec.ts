@@ -305,11 +305,90 @@ describe('mutations', () => {
     listMock.mockResolvedValue(makeList({ items: [created], total: 1 }))
 
     const store = useTasksStore()
-    await store.createTask({ title: 'New task' })
+    const result = await store.createTask({ title: 'New task' })
 
+    expect(result).toEqual({ status: 'created', task: created })
     expect(createMock).toHaveBeenCalledWith({ title: 'New task' })
     expect(listMock).toHaveBeenCalledTimes(1)
     expect(store.items).toEqual([created])
+    expect(store.mutating).toBe(false)
+  })
+
+  it('returns created even when the follow-up refetch fails', async () => {
+    const existing = makeTask({ id: 1, title: 'Existing' })
+    listMock.mockResolvedValueOnce(makeList({ items: [existing], total: 1 }))
+
+    const store = useTasksStore()
+    await store.fetchTasks()
+
+    const created = makeTask({ id: 2, title: 'New task' })
+    createMock.mockResolvedValue(created)
+    listMock.mockRejectedValueOnce(new ApiError('refresh failed', 500))
+
+    const result = await store.createTask({ title: 'New task' })
+
+    expect(result).toEqual({ status: 'created', task: created })
+    expect(store.error?.message).toBe('refresh failed')
+    expect(store.items).toEqual([existing])
+    expect(store.mutating).toBe(false)
+  })
+
+  it('returns the POST error and leaves the loading error untouched', async () => {
+    const loadFailure = new ApiError('list failed', 500)
+    listMock.mockRejectedValueOnce(loadFailure)
+
+    const store = useTasksStore()
+    await store.fetchTasks()
+    expect(store.error).toBe(loadFailure)
+
+    const createFailure = new ApiError('create failed', 422)
+    createMock.mockRejectedValueOnce(createFailure)
+
+    const result = await store.createTask({ title: '' })
+
+    expect(result).toEqual({ status: 'error', error: createFailure })
+    expect(store.error).toBe(loadFailure)
+    expect(listMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns skipped for a concurrent create and keeps mutating semantics', async () => {
+    const gate = deferred<Task>()
+    createMock.mockReturnValueOnce(gate.promise)
+    listMock.mockResolvedValue(makeList())
+
+    const store = useTasksStore()
+    const first = store.createTask({ title: 'first' })
+
+    expect(store.mutating).toBe(true)
+    await expect(store.createTask({ title: 'second' })).resolves.toEqual({
+      status: 'skipped',
+    })
+    expect(createMock).toHaveBeenCalledTimes(1)
+
+    gate.resolve(makeTask())
+    await first
+
+    expect(store.mutating).toBe(false)
+  })
+
+  it('keeps mutating true until the create refetch completes', async () => {
+    const createGate = deferred<Task>()
+    const listGate = deferred<TaskListResponse>()
+    createMock.mockReturnValueOnce(createGate.promise)
+    listMock.mockReturnValueOnce(listGate.promise)
+
+    const store = useTasksStore()
+    const promise = store.createTask({ title: 'x' })
+
+    expect(store.mutating).toBe(true)
+
+    createGate.resolve(makeTask())
+    await vi.waitFor(() => expect(listMock).toHaveBeenCalledTimes(1))
+    expect(store.mutating).toBe(true)
+
+    listGate.resolve(makeList())
+    await promise
+
     expect(store.mutating).toBe(false)
   })
 
@@ -411,20 +490,22 @@ describe('mutations', () => {
     expect(listMock.mock.calls.some(([params]) => params?.offset === 0)).toBe(true)
   })
 
-  it('keeps the list intact when a mutation fails', async () => {
+  it('keeps the list intact and returns the error when create fails', async () => {
     const task = makeTask()
     listMock.mockResolvedValueOnce(makeList({ items: [task], total: 1 }))
-    createMock.mockRejectedValue(new ApiError('bad request', 422))
+    const failure = new ApiError('bad request', 422)
+    createMock.mockRejectedValue(failure)
 
     const store = useTasksStore()
     await store.fetchTasks()
     const listCalls = listMock.mock.calls.length
 
-    await store.createTask({ title: '' })
+    const result = await store.createTask({ title: '' })
 
+    expect(result).toEqual({ status: 'error', error: failure })
     expect(store.items).toEqual([task])
     expect(store.total).toBe(1)
-    expect(store.error).toBeInstanceOf(ApiError)
+    expect(store.error).toBeNull()
     expect(store.mutating).toBe(false)
     expect(listMock).toHaveBeenCalledTimes(listCalls)
   })

@@ -2,6 +2,7 @@
 import { storeToRefs } from 'pinia'
 import { onMounted } from 'vue'
 
+import TaskForm from '@/components/TaskForm.vue'
 import TaskItem from '@/components/TaskItem.vue'
 import { useTasksStore } from '@/stores/tasks'
 
@@ -36,6 +37,8 @@ function retry(): void {
         Всего задач: {{ total }}
       </p>
     </div>
+
+    <TaskForm />
 
     <div
       v-if="loading && items.length === 0"

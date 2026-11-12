@@ -10,12 +10,14 @@ vi.mock('@/api/tasks', () => ({
 }))
 
 import { ApiError } from '@/api/client'
-import { listTasks, updateTask } from '@/api/tasks'
+import { createTask, listTasks, updateTask } from '@/api/tasks'
 import { useTasksStore } from '@/stores/tasks'
 import type { Task, TaskListResponse } from '@/types/task'
+import TaskForm from '@/components/TaskForm.vue'
 import TaskItem from '@/components/TaskItem.vue'
 import TaskListView from '@/views/TaskListView.vue'
 
+const createMock = vi.mocked(createTask)
 const listMock = vi.mocked(listTasks)
 const updateMock = vi.mocked(updateTask)
 
@@ -63,6 +65,7 @@ function mountView() {
 }
 
 beforeEach(() => {
+  createMock.mockReset()
   listMock.mockReset()
   updateMock.mockReset()
 })
@@ -78,6 +81,7 @@ describe('TaskListView', () => {
     expect(wrapper.get('[role="status"]').text()).toContain('Загрузка задач')
     expect(wrapper.findAll('li')).toHaveLength(0)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.findComponent(TaskForm).exists()).toBe(true)
   })
 
   it('renders tasks and the total count after loading', async () => {
@@ -157,6 +161,7 @@ describe('TaskListView', () => {
     expect(wrapper.findAll('li')).toHaveLength(0)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     expect(wrapper.find('[role="status"]').exists()).toBe(false)
+    expect(wrapper.findComponent(TaskForm).exists()).toBe(true)
   })
 
   it('shows a filtered empty message when a filter is active', async () => {
@@ -174,6 +179,46 @@ describe('TaskListView', () => {
     expect(wrapper.text()).toContain('По выбранному фильтру задач нет')
   })
 
+  it('creates a task through the form and refreshes the list', async () => {
+    listMock.mockResolvedValueOnce(makeList())
+    const created = makeTask({ id: 5, title: 'Новая задача' })
+    createMock.mockResolvedValueOnce(created)
+    listMock.mockResolvedValueOnce(makeList({ items: [created], total: 1 }))
+
+    const { wrapper } = mountView()
+    await flushPromises()
+
+    await wrapper.get('#task-title').setValue('Новая задача')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(createMock).toHaveBeenCalledWith({ title: 'Новая задача', description: null })
+    expect(wrapper.findAll('li')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Новая задача')
+    expect((wrapper.get('#task-title').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('does not resubmit when a successful create is followed by a failed refetch', async () => {
+    listMock.mockResolvedValueOnce(makeList())
+    createMock.mockResolvedValueOnce(makeTask({ id: 5, title: 'Новая' }))
+    listMock.mockRejectedValueOnce(new ApiError('refresh failed', 500))
+
+    const { wrapper } = mountView()
+    await flushPromises()
+
+    await wrapper.get('#task-title').setValue('Новая')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(createMock).toHaveBeenCalledTimes(1)
+    expect((wrapper.get('#task-title').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.getComponent(TaskForm).find('.form-error').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Не удалось загрузить задачи')
+
+    await flushPromises()
+    expect(createMock).toHaveBeenCalledTimes(1)
+  })
+
   it('shows the error message instead of an empty list', async () => {
     listMock.mockRejectedValue(new ApiError('Backend is down', 0))
 
@@ -184,6 +229,7 @@ describe('TaskListView', () => {
     expect(alert.text()).toContain('Не удалось загрузить задачи')
     expect(alert.text()).toContain('Backend is down')
     expect(wrapper.findAll('li')).toHaveLength(0)
+    expect(wrapper.findComponent(TaskForm).exists()).toBe(true)
   })
 
   it('reloads tasks when the retry button is pressed', async () => {
@@ -223,6 +269,7 @@ describe('TaskListView', () => {
     expect(wrapper.findAll('li')).toHaveLength(1)
     expect(wrapper.get('.task-item').element).toBe(itemElement)
     expect(wrapper.text()).toContain('Старая задача')
+    expect(wrapper.findComponent(TaskForm).exists()).toBe(true)
 
     gate.resolve(makeList({ items: [makeTask({ id: 1, title: 'Новая задача' })], total: 1 }))
     await reload
@@ -279,6 +326,7 @@ describe('TaskListView', () => {
     const alert = wrapper.get('[role="alert"]')
     expect(alert.text()).toContain('Не удалось обновить список')
     expect(alert.text()).toContain('Не удалось обновить')
+    expect(wrapper.findComponent(TaskForm).exists()).toBe(true)
 
     listMock.mockResolvedValueOnce(
       makeList({ items: [makeTask({ id: 1, title: 'Задача', is_completed: true })], total: 1 }),

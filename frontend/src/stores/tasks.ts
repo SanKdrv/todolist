@@ -45,6 +45,11 @@ function lastPageOffset(total: number, limit: number): number {
   return Math.max(0, (Math.ceil(total / limit) - 1) * limit)
 }
 
+export type CreateTaskResult =
+  | { status: 'created'; task: Task }
+  | { status: 'error'; error: ApiError }
+  | { status: 'skipped' }
+
 export const useTasksStore = defineStore('tasks', () => {
   const items = ref<Task[]>([])
   const total = ref(0)
@@ -238,10 +243,33 @@ export const useTasksStore = defineStore('tasks', () => {
     }
   }
 
-  async function createTask(payload: TaskCreate): Promise<void> {
-    await runMutation('create', async () => {
-      await createTaskRequest(payload)
-    })
+  async function createTask(payload: TaskCreate): Promise<CreateTaskResult> {
+    const key = 'create'
+    if (pendingMutations.has(key)) {
+      return { status: 'skipped' }
+    }
+
+    pendingMutations.add(key)
+    mutating.value = true
+
+    try {
+      let task: Task
+      try {
+        task = await createTaskRequest(payload)
+      } catch (reason: unknown) {
+        // POST failures belong to the caller; they must not touch the
+        // list-loading `error`.
+        return { status: 'error', error: toApiError(reason) }
+      }
+
+      // A successful POST stays successful even if this refetch fails: its
+      // error is recorded/kept as a list-loading error by fetchTasks.
+      await fetchTasks()
+      return { status: 'created', task }
+    } finally {
+      pendingMutations.delete(key)
+      mutating.value = pendingMutations.size > 0
+    }
   }
 
   async function updateTask(taskId: number, payload: TaskUpdate): Promise<void> {
