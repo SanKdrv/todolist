@@ -27,7 +27,5 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/**/*.spec.ts', 'src/**/*.spec.ts'],
-    // Stage 1 ships the harness only; real tests arrive with the API layer.
-    passWithNoTests: true,
   },
 })

@@ -314,6 +314,32 @@ describe('mutations', () => {
     expect(store.mutating).toBe(false)
   })
 
+  it('resets pagination to the first page after a successful create', async () => {
+    listMock
+      .mockResolvedValueOnce(makeList({ items: makeTasks(20), total: 45, has_more: true }))
+      .mockResolvedValueOnce(
+        makeList({ items: makeTasks(20, 21), total: 45, offset: 20, has_more: true }),
+      )
+
+    const store = useTasksStore()
+    await store.fetchTasks()
+    await store.setPage(2)
+    expect(store.offset).toBe(20)
+
+    const created = makeTask({ id: 50, title: 'New task' })
+    createMock.mockResolvedValue(created)
+    listMock.mockResolvedValueOnce(
+      makeList({ items: [created], total: 46, offset: 0, has_more: true }),
+    )
+
+    const result = await store.createTask({ title: 'New task' })
+
+    expect(result).toEqual({ status: 'created', task: created })
+    expect(store.offset).toBe(0)
+    expect(store.currentPage).toBe(1)
+    expect(listMock).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }))
+  })
+
   it('returns created even when the follow-up refetch fails', async () => {
     const existing = makeTask({ id: 1, title: 'Existing' })
     listMock.mockResolvedValueOnce(makeList({ items: [existing], total: 1 }))

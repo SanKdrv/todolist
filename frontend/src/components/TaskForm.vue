@@ -83,6 +83,7 @@ async function submit(): Promise<void> {
         name="title"
         :maxlength="TITLE_MAX_LENGTH"
         autocomplete="off"
+        aria-required="true"
         :disabled="submitting"
         :aria-invalid="validationError ? 'true' : undefined"
         :aria-describedby="validationError ? 'task-title-error' : undefined"

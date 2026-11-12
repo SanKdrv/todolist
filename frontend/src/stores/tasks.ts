@@ -262,8 +262,10 @@ export const useTasksStore = defineStore('tasks', () => {
         return { status: 'error', error: toApiError(reason) }
       }
 
-      // A successful POST stays successful even if this refetch fails: its
-      // error is recorded/kept as a list-loading error by fetchTasks.
+      // A created task is always the newest one, so it lives on the first
+      // page. Reset pagination before refetching to make it visible even if
+      // the user was on page 2+. The active filter stays unchanged.
+      offset.value = 0
       await fetchTasks()
       return { status: 'created', task }
     } finally {
