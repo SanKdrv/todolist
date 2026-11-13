@@ -19,18 +19,26 @@ taskflow/
 │   ├── alembic/        # миграции базы данных
 │   ├── alembic.ini
 │   ├── Dockerfile
+│   ├── Dockerfile.prod
 │   ├── .dockerignore
 │   └── pyproject.toml
 ├── frontend/
 │   ├── src/
 │   ├── tests/
 │   ├── Dockerfile
+│   ├── Dockerfile.prod
 │   ├── .dockerignore
 │   ├── vite.config.ts
 │   └── package.json
+├── deploy/
+│   ├── Caddyfile
+│   └── postgres/
+│       └── init-app-role.sh
 ├── docker-compose.yml
+├── docker-compose.prod.yml
 ├── Makefile
 ├── .env.example
+├── .env.prod.example
 ├── .gitignore
 └── README.md
 ```
@@ -203,7 +211,7 @@ npm test
 make test
 ```
 
-Backend-тесты используют отдельную БД `taskflow_test`; `conftest.py` создаёт её при необходимости через подключение к служебной БД `postgres`. Пользователь PostgreSQL из Compose по умолчанию — superuser, поэтому прав достаточно.
+Backend-тесты используют отдельную БД `taskflow_test`; `conftest.py` создаёт её при необходимости через подключение к служебной БД `postgres`. В dev Compose пользователь PostgreSQL по умолчанию — superuser, поэтому прав достаточно. В production backend подключается от отдельной роли `taskflow_app` (см. раздел Production).
 
 ## Windows / Docker Desktop
 
@@ -328,6 +336,289 @@ docker compose exec -T backend alembic upgrade head
 `env.py` берёт URL из `app.core.config.settings` (`DATABASE_URL`), поэтому
 в `alembic.ini` нет учётных данных. В контейнере `DATABASE_URL` указывает на
 `db:5432`; локально — на `localhost:5432`.
+
+## Production (Ubuntu 24.04 + Caddy)
+
+Production-стек отделён от dev и не использует Vite dev server, bind mounts или autoreload:
+
+- `docker-compose.prod.yml` — отдельный Compose-проект `taskflow-prod` и отдельные volumes;
+- `backend/Dockerfile.prod` — runtime-only образ, non-root пользователь, без dev-зависимостей и `--reload`;
+- `frontend/Dockerfile.prod` — сборка Vue на Node 24, раздача статики через Caddy;
+- `deploy/Caddyfile` — автоматический HTTPS, SPA и прокси `/api/*` на backend;
+- `deploy/postgres/init-app-role.sh` — создание роли приложения при первой инициализации PostgreSQL.
+
+Наружу открыты только `80` и `443`; PostgreSQL и backend доступны только внутри Docker-сети.
+
+Production-режим (`APP_ENV=production`, `APP_DEBUG=false`) задаётся непосредственно в `docker-compose.prod.yml`; в `.env.prod` этих переменных нет. `.env.prod` используется Compose для подстановки значений, а не как общий env-файл контейнеров.
+
+### Требования к серверу
+
+- Ubuntu 24.04, Docker Engine и Docker Compose v2;
+- домен `xn----8sbafmcbeon8ceb3bnc.xn--p1ai` (ASCII/punycode; в браузере отображается кириллицей) должен указывать A-записью на публичный IP ВМ;
+- открыты порты `22`, `80`, `443`; порты `5432`, `8000`, `5173` закрыты;
+- Caddy выпускает сертификат Let's Encrypt только после того, как DNS начнёт указывать на сервер. До этого `web` не запускайте.
+
+### Файлы, которые нужны на сервере
+
+Для запуска заранее собранных образов достаточно этих файлов:
+
+- `docker-compose.prod.yml`;
+- `deploy/Caddyfile`;
+- `deploy/postgres/init-app-role.sh`;
+- `.env.prod` (создаётся из `.env.prod.example`, в Git не попадает);
+- архив образов `taskflow-images.tar.gz` или `taskflow-images.tar`.
+
+Если собирать образы прямо на сервере, нужен весь репозиторий (`backend/`, `frontend/` и остальные файлы).
+
+### PostgreSQL: bootstrap-пользователь и роль приложения
+
+`POSTGRES_USER` — это **bootstrap-суперпользователь** официального образа PostgreSQL. Он используется только для первоначальной инициализации кластера и административных операций (например, `pg_dump`). Backend подключается не от его имени.
+
+При первом запуске на пустом volume `deploy/postgres/init-app-role.sh` создаёт роль:
+
+- `taskflow_app`;
+- `LOGIN`;
+- `NOSUPERUSER`;
+- `NOCREATEDB`;
+- `NOCREATEROLE`.
+
+Эта же роль становится владельцем базы `taskflow`, поэтому Alembic может создавать и изменять таблицы и индексы без прав суперпользователя. Пароль задаётся отдельной переменной `APP_DB_PASSWORD`; в SQL он передаётся через `psql`-переменную и `format('%L', ...)`, без конкатенации непроверенной строки.
+
+**Важно:** init-скрипты PostgreSQL выполняются только при первой инициализации пустого volume. Если volume `postgres_data` уже существует, скрипт не запустится. Не удаляйте и не пересоздавайте volume; перейдите на новую роль вручную по инструкции ниже.
+
+### Подготовка `.env.prod`
+
+```bash
+cp .env.prod.example .env.prod
+chmod 600 .env.prod
+```
+
+Заполните:
+
+- `POSTGRES_USER`, `POSTGRES_PASSWORD` — bootstrap-суперпользователь; backend их не использует;
+- `POSTGRES_DB` — имя базы (`taskflow`);
+- `APP_DB_PASSWORD` — пароль роли `taskflow_app`;
+- `DATABASE_URL` — подключение от имени `taskflow_app` к hostname `db`. Если пароль содержит `@`, `:`, `/` и т.п., percent-encode его в URL (например, `@` → `%40`). Значение `APP_DB_PASSWORD` при этом остаётся исходным, а `DATABASE_URL` должен содержать тот же пароль;
+- `DOMAIN` — ASCII-форма домена;
+- `ACME_EMAIL` — email для Let's Encrypt.
+
+Если пароль содержит `$`, заключите значение в одинарные кавычки в `.env.prod`, чтобы Compose не интерполировал его как переменную.
+
+`.env.prod` не коммитится. Секреты не хранятся в репозитории.
+
+### Сборка образов
+
+Собирать лучше локально/на отдельной машине: на ВМ 2 vCPU / 4 GiB сборка frontend может быть тяжёлой.
+
+Linux / WSL / Git Bash:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod build
+docker save taskflow-backend:prod taskflow-frontend:prod | gzip > taskflow-images.tar.gz
+```
+
+PowerShell (Windows 10+):
+
+```powershell
+docker compose -f docker-compose.prod.yml --env-file .env.prod build
+docker save -o taskflow-images.tar taskflow-backend:prod taskflow-frontend:prod
+```
+
+В PowerShell нет `gzip`; если нужен сжатый архив, выполните `docker save ... | gzip` в WSL или Git Bash. `docker load` понимает оба варианта.
+
+### Перенос на чистый сервер
+
+На сервере создайте каталог:
+
+```bash
+sudo mkdir -p /opt/taskflow
+sudo chown "$USER":"$USER" /opt/taskflow
+```
+
+С локальной машины (Linux / WSL / Git Bash):
+
+```bash
+scp docker-compose.prod.yml user@server:/opt/taskflow/
+scp -r deploy user@server:/opt/taskflow/
+scp .env.prod user@server:/opt/taskflow/
+scp taskflow-images.tar.gz user@server:/opt/taskflow/
+```
+
+PowerShell:
+
+```powershell
+ssh user@server "mkdir -p /opt/taskflow"
+scp .\docker-compose.prod.yml user@server:/opt/taskflow/
+scp -r .\deploy user@server:/opt/taskflow/
+scp .\.env.prod user@server:/opt/taskflow/
+scp .\taskflow-images.tar user@server:/opt/taskflow/
+```
+
+`scp` входит в Windows 10+ (OpenSSH Client). Если его нет, используйте WinSCP.
+
+На сервере:
+
+```bash
+cd /opt/taskflow
+chmod 600 .env.prod
+chmod 755 deploy/postgres/init-app-role.sh
+docker load -i taskflow-images.tar.gz
+# если переносили несжатый архив:
+# docker load -i taskflow-images.tar
+docker compose -f docker-compose.prod.yml --env-file .env.prod config --quiet
+```
+
+`chmod 755` делает init-скрипт читаемым и исполняемым для пользователя контейнера PostgreSQL. Если файл не исполняемый, официальный entrypoint выполнит его через `source`; скрипт безопасен для обоих режимов. Права `600` на init-скрипт не подходят: пользователь `postgres` внутри контейнера не сможет его прочитать.
+
+Файл, скопированный из Windows, может иметь Git mode `100644` без исполняемого бита — это не мешает запуску через `source`. `chmod 755` на сервере гарантирует и чтение, и возможность прямого запуска. Проверить права можно через `ls -l deploy/postgres/init-app-role.sh`; Compose монтирует файл в `/docker-entrypoint-initdb.d/01-app-role.sh` (см. вывод `docker compose -f docker-compose.prod.yml --env-file .env.prod config`).
+
+### Первый запуск
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d db
+docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm backend alembic upgrade head
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d backend web
+```
+
+Миграции **не запускаются автоматически** при старте контейнера. `web` (Caddy) стартует после успешного healthcheck `/health/ready` backend.
+
+Если на сервере уже есть старый volume `postgres_data` без роли `taskflow_app`, миграции завершатся ошибкой аутентификации. Не удаляйте volume — выполните ручную миграцию ролей из раздела ниже.
+
+### Проверка
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod ps
+```
+
+Проверка health-эндпоинтов — **изнутри backend-контейнера**, а не через публичный Caddy. Caddy проксирует только `/api/*`, поэтому `https://<домен>/health` и `/health/ready` вернут SPA `index.html`, а не JSON backend:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T backend \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health').read().decode())"
+
+docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T backend \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health/ready').read().decode())"
+```
+
+Ожидаемо: `{"status":"ok"}` и `{"status":"ready"}`. Readiness намеренно не публикуется наружу.
+
+Проверка через публичный HTTPS:
+
+```bash
+curl -i https://xn----8sbafmcbeon8ceb3bnc.xn--p1ai/api/v1/session
+```
+
+Ожидаемо:
+
+- `/api/v1/session` отвечает `200` и выставляет cookie `__Host-tf_session` с `Secure`, `HttpOnly`, `SameSite=lax`, `Path=/`;
+- создание задачи работает через UI;
+- `docker compose -f docker-compose.prod.yml --env-file .env.prod ps` не показывает публикацию `5432` или `8000`.
+
+Логи Caddy (выпуск сертификата):
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f --tail=100 web
+```
+
+### Обновление
+
+Бэкап выполняется на Ubuntu-сервере в bash. PowerShell-варианта backup в этом разделе нет.
+
+```bash
+# 1. Бэкап БД
+(
+  set -o pipefail
+
+  backup="backup-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+
+  if ! docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T db \
+      sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup"; then
+    rm -f -- "$backup"
+    echo "ERROR: pg_dump failed; incomplete backup removed" >&2
+    false
+  elif ! gzip -t "$backup"; then
+    rm -f -- "$backup"
+    echo "ERROR: gzip integrity check failed; corrupt backup removed: $backup" >&2
+    false
+  else
+    echo "Backup created and gzip-verified: $backup"
+  fi
+)
+
+# 2. Новые образы (собранные локально и перенесённые, или build на сервере)
+docker load -i taskflow-images.tar.gz
+
+# 3. Миграции
+docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm backend alembic upgrade head
+
+# 4. Перезапуск приложения
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d backend web
+```
+
+Если backup-команда вернула non-zero, остановитесь: не переходите к шагу 2. `gzip -t` проверяет только целостность gzip-контейнера, а не полноту и корректность SQL-дампа; периодически проверяйте восстановление на отдельной БД.
+
+Старый backend продолжает работать во время шага 3. Для текущей additive-миграции это безопасно; для будущих миграций с удалением или переименованием колонок используйте maintenance window или схему expand/contract. При несовместимых миграциях сначала проверьте их на копии БД; при необходимости используйте `alembic downgrade` по согласованному плану.
+
+### Остановка и данные
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod down
+```
+
+Команда останавливает контейнеры, но **сохраняет** volumes `postgres_data`, `caddy_data`, `caddy_config`.
+
+Полное удаление данных и сертификатов (необратимо):
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod down -v
+```
+
+Используйте только при необходимости полностью пересоздать окружение.
+
+**Не запускайте на production** `docker volume prune`, `docker system prune` и другие команды, удаляющие неиспользуемые volumes: они могут уничтожить `postgres_data` вместе с базой. Для очистки старых образов используйте точечное удаление конкретных тегов.
+
+### Переход на роль `taskflow_app` на существующем volume
+
+Init-скрипт не выполняется на уже инициализированном volume. Если база была создана раньше от имени bootstrap-пользователя, перейдите вручную:
+
+1. Откройте `psql` от bootstrap-суперпользователя:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod exec db \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+2. Создайте роль и передайте ей базу. Пароль задайте через `\password` (psql запросит его и не покажет в истории команд); он должен совпадать с `APP_DB_PASSWORD`:
+
+```sql
+CREATE ROLE taskflow_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+\password taskflow_app
+ALTER DATABASE taskflow OWNER TO taskflow_app;
+```
+
+3. Если таблицы и последовательности уже принадлежат старому пользователю приложения (не bootstrap-суперпользователю `postgres`), переназначьте владение. Команду нужно выполнять, подключившись к базе `taskflow`, от суперпользователя:
+
+```sql
+REASSIGN OWNED BY old_role TO taskflow_app;
+```
+
+`REASSIGN OWNED` действует на объекты в текущей базе и не меняет владельца самой базы; при необходимости выполните его также для других баз, где есть объекты старой роли. Не используйте в качестве `old_role` bootstrap-суперпользователя `postgres`.
+
+4. Обновите `DATABASE_URL` в `.env.prod` (пользователь `taskflow_app`, пароль `APP_DB_PASSWORD`) и перезапустите backend:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d backend
+```
+
+Не удаляйте и не пересоздавайте volume `postgres_data` ради применения init-скрипта.
+
+### Бэкапы и диск
+
+- Регулярно делайте `pg_dump` (команда выше) и храните копии вне ВМ.
+- Том `caddy_data` содержит сертификаты; при его потере Caddy запросит новые (учитывайте rate limits Let's Encrypt).
+- Docker-логи ограничены (`max-size: 10m`, `max-file: 3` на сервис).
+- На диске 10 GiB следите за образами, build cache и размером БД; старые неиспользуемые образы можно удалять вручную.
+- Очистка истёкших сессий пока не автоматизирована (см. технический долг), БД со временем растёт.
 
 ## Технический долг
 
