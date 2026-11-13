@@ -43,7 +43,7 @@ def engine() -> Iterator[Engine]:
     engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
 
     # Tests build the schema from metadata (fast, no Alembic round trip);
-    # migrations themselves are verified separately by `alembic check` in CI.
+    # migrations are verified by the dedicated CI job (upgrade head + check).
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
 
