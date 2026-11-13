@@ -6,6 +6,9 @@
 
 ```
 taskflow/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── backend/
 │   ├── app/
 │   │   ├── api/        # HTTP-роутеры и зависимости
@@ -32,10 +35,18 @@ taskflow/
 │   └── package.json
 ├── deploy/
 │   ├── Caddyfile
+│   ├── Caddyfile.e2e
 │   └── postgres/
 │       └── init-app-role.sh
+├── e2e/
+│   ├── README.md
+│   ├── conftest.py
+│   ├── requirements.txt
+│   ├── task_list_page.py
+│   └── test_tasks.py
 ├── docker-compose.yml
 ├── docker-compose.prod.yml
+├── docker-compose.e2e.yml
 ├── Makefile
 ├── .env.example
 ├── .env.prod.example
@@ -213,6 +224,42 @@ make test
 
 Backend-тесты используют отдельную БД `taskflow_test`; `conftest.py` создаёт её при необходимости через подключение к служебной БД `postgres`. В dev Compose пользователь PostgreSQL по умолчанию — superuser, поэтому прав достаточно. В production backend подключается от отдельной роли `taskflow_app` (см. раздел Production).
 
+- Backend: pytest + PostgreSQL, API, сессии, CSRF, пагинация и OpenAPI.
+- Frontend: Vitest, ESLint, `vue-tsc` и production-сборка.
+- Selenium E2E: отдельный Docker Compose-стек; тесты запускаются в CI отдельным job и не входят в `Required checks`. Подробности и команды — в `e2e/README.md`.
+
+## CI (GitHub Actions)
+
+Workflow `.github/workflows/ci.yml` запускается на `pull_request` и на `push` в `main`. Он проверяет backend, frontend, миграции, production Compose и сборку Docker images; deployment не выполняется.
+
+| Job | Что проверяет |
+|---|---|
+| `Backend tests` | PostgreSQL 16, Python 3.12, Ruff 0.17.5, `pytest` |
+| `Alembic migrations` | чистая PostgreSQL, `alembic upgrade head`, `alembic check`, `alembic current` |
+| `Frontend checks` | Node 24, Vitest, ESLint, typecheck, production build |
+| `Production Compose config` | `.env.prod.example`, `docker compose config`, синтаксис init-скрипта |
+| `Production Docker images` | сборка backend/frontend production images и smoke checks |
+| `Selenium E2E` | отдельный `taskflow-e2e` стек, миграции и `pytest e2e` |
+| `Required checks` | агрегирует обязательные jobs |
+
+В текущем состоянии обязательные проверки проходят. **CI не выполняет deployment**; Selenium E2E запускается отдельным job и пока не входит в `Required checks`. Production secrets в CI не используются.
+
+## Selenium E2E
+
+Для браузерных проверок используется отдельный `docker-compose.e2e.yml` (project `taskflow-e2e`): PostgreSQL с БД `taskflow_e2e` в `tmpfs`, backend в `APP_ENV=test`, frontend через HTTP Caddy на `:8080`, Selenium standalone Chrome на `:4444`. Production Compose и production volumes не используются.
+
+Реализованы семь сценариев:
+
+1. открытие приложения и доступность формы;
+2. создание задачи с названием и описанием;
+3. отображение названия и описания в списке;
+4. отметка задачи выполненной;
+5. фильтры «Активные»/«Завершённые»/«Все»;
+6. удаление задачи;
+7. сохранение задачи и описания после перезагрузки.
+
+Тесты запускаются локально и в GitHub Actions отдельным job; job не входит в `Required checks`. Команды запуска, адреса и ограничения — в `e2e/README.md`.
+
 ## Windows / Docker Desktop
 
 - `make` нет в PowerShell. Варианты: WSL2, Git Bash, Chocolatey (`choco install make`) либо обычные команды `docker compose`.
@@ -227,6 +274,7 @@ Backend-тесты используют отдельную БД `taskflow_test`;
   ```
 - HMR: `CHOKIDAR_USEPOLLING=true` уже задан для frontend. Если правки всё равно не подхватываются, проверьте, что проект лежит на диске, доступном Docker Desktop (WSL2-диск предпочтительнее).
 - Скрипты/команды с путями выполняйте в PowerShell с прямыми слэшами или через WSL; Makefile использует LF и табы — не конвертируйте его в CRLF.
+- E2E использует порты `8080` и `4444`; команды и разделение адресов host/browser — в `e2e/README.md`.
 
 ## База данных
 
@@ -333,6 +381,10 @@ make migrate
 docker compose exec -T backend alembic upgrade head
 ```
 
+В CI отдельный job `Alembic migrations` проверяет миграции на чистой PostgreSQL:
+`alembic upgrade head`, `alembic check` и `alembic current`. Он не применяет
+миграции к production; production-миграции запускаются вручную по runbook.
+
 `env.py` берёт URL из `app.core.config.settings` (`DATABASE_URL`), поэтому
 в `alembic.ini` нет учётных данных. В контейнере `DATABASE_URL` указывает на
 `db:5432`; локально — на `localhost:5432`.
@@ -348,6 +400,8 @@ Production-стек отделён от dev и не использует Vite de
 - `deploy/postgres/init-app-role.sh` — создание роли приложения при первой инициализации PostgreSQL.
 
 Наружу открыты только `80` и `443`; PostgreSQL и backend доступны только внутри Docker-сети.
+
+Deployment в production выполняется вручную по инструкциям ниже. Автоматический CD не реализован; GitHub Actions CI не выполняет deploy.
 
 Production-режим (`APP_ENV=production`, `APP_DEBUG=false`) задаётся непосредственно в `docker-compose.prod.yml`; в `.env.prod` этих переменных нет. `.env.prod` используется Compose для подстановки значений, а не как общий env-файл контейнеров.
 
@@ -625,18 +679,18 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d backend
 | Приоритет | Технический долг | Когда закрыть |
 |---|---|---|
 | Средний | `Cache-Control: no-store` для необработанных HTTP 500 | Перед финальной сдачей |
-| Низкий | Предупреждение Starlette TestClient о httpx / httpx2 | При настройке CI |
+| Низкий | Предупреждение Starlette TestClient о httpx / httpx2 | При обновлении FastAPI/httpx |
 | Средний | Очистка просроченных сессий | Этап фоновой очистки |
 | Низкий | Параллельное создание сессий может оставлять лишние записи | Можно оставить для MVP |
 | Низкий | Часы приложения вместо времени PostgreSQL при проверке TTL | При масштабировании |
-| Средний | Тесты создают схему через `metadata.create_all`, а не через Alembic | При настройке CI |
+| Средний | Тесты создают схему через `metadata.create_all`; в CI есть отдельный migration job, но тестовая схема всё ещё не проходит через Alembic | Следующий этап тестовой инфраструктуры |
 | Средний | Offset-пагинация деградирует на больших объёмах, cursor pagination не реализована | Этап оптимизации после MVP |
 | Низкий | `PATCH` с пустым телом — no-op; поведение не описано в ТЗ | Уточнить на этапе frontend |
 | Низкий | `updated_at` использует `now()` (время транзакции), а не `clock_timestamp()` | При необходимости точных меток |
 | Низкий | 401 не сбрасывает устаревшую cookie — браузер шлёт её до истечения `Max-Age` | Полировка перед сдачей |
-| Средний | Нет rate limiting для API в целом — включая анонимные сессии и ресурсоёмкие операции (пагинированные списки, массовые мутации); риск перегрузки PostgreSQL при злоупотреблении или всплесках трафика | После frontend, перед публикацией |
-| Средний | CI/CD: GitHub Actions workflow для backend и frontend (lint, typecheck, tests, build). До восстановления доступности GitHub-hosted minutes проверять workflow локально через `act` при наличии Docker | После стабилизации frontend |
-| Средний | Frontend E2E на Selenium WebDriver: создание задачи, изменение статуса, редактирование, удаление, фильтры, пагинация и сохранение после перезагрузки в реальном браузере | После завершения UI |
+| Средний | Нет rate limiting для API в целом — включая анонимные сессии и ресурсоёмкие операции (пагинированные списки, массовые мутации); риск перегрузки PostgreSQL при злоупотреблении или всплесках трафика | Ближайший релиз (production уже опубликован) |
+| Средний | CD: автоматический deploy после merge в `main` не реализован. CI уже настроен в `.github/workflows/ci.yml` и выполняет только проверки | После стабилизации CI |
+| Средний | Selenium E2E: базовые 7 сценариев реализованы, проходят локально и в CI отдельным job, но job не входит в `Required checks` и не покрывает пагинацию/редактирование | После стабилизации E2E |
 | Средний | Фильтры, сортировка и пагинация не синхронизированы с query-параметрами Vue Router | Этап интеграции UI с router |
 | Низкий | Нет optimistic updates: после каждой успешной мутации список перезапрашивается — осознанный выбор ради консистентности offset-пагинации | Можно оставить для MVP |
 | Низкий | Устаревшие ответы `fetchTasks()` отбрасываются по sequence, но HTTP-запросы не отменяются (нет AbortController) | Этап оптимизации после MVP |

@@ -176,6 +176,57 @@ jobs:
       - name: Verify frontend static files exist
         run: docker run --rm --entrypoint sh taskflow-frontend:ci -c "test -f /srv/index.html"
 
+  e2e:
+    name: Selenium E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: e2e/requirements.txt
+
+      - name: Install E2E dependencies
+        run: python -m pip install -r e2e/requirements.txt
+
+      - name: Start PostgreSQL
+        run: docker compose -f docker-compose.e2e.yml up -d --wait db
+
+      - name: Apply E2E migrations
+        run: docker compose -f docker-compose.e2e.yml run --rm backend alembic upgrade head
+
+      - name: Start E2E services
+        run: docker compose -f docker-compose.e2e.yml up -d --wait backend web selenium
+
+      - name: Run Selenium E2E
+        env:
+          E2E_BASE_URL: http://web:8080
+          SELENIUM_REMOTE_URL: http://localhost:4444/wd/hub
+        run: pytest e2e -v --tb=short
+
+      - name: Collect E2E logs
+        if: failure()
+        run: |
+          mkdir -p e2e-artifacts
+          docker compose -f docker-compose.e2e.yml ps --all > e2e-artifacts/compose-ps.txt 2>&1 || true
+          docker compose -f docker-compose.e2e.yml logs --no-color --tail=300 db backend web selenium > e2e-artifacts/compose.log 2>&1 || true
+
+      - name: Upload E2E logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: e2e-artifacts
+          if-no-files-found: ignore
+
+      - name: Stop E2E stack
+        if: always()
+        run: docker compose -f docker-compose.e2e.yml down
+
   required:
     name: Required checks
     if: always()
