@@ -2,6 +2,25 @@
 
 Сервис управления задачами: backend на FastAPI + frontend, PostgreSQL, Docker Compose.
 
+## Содержание
+
+- [Структура](#структура)
+- [Требования](#требования)
+- [Docker Compose (dev)](#docker-compose-dev)
+- [Backend (локальный запуск)](#backend-локальный-запуск)
+- [Frontend (локальный запуск)](#frontend-локальный-запуск)
+- [Тесты](#тесты)
+- [CI (GitHub Actions)](#ci-github-actions)
+- [Selenium E2E](#selenium-e2e)
+- [Windows / Docker Desktop](#windows--docker-desktop)
+- [База данных](#база-данных)
+- [Сессии](#сессии)
+- [Rate Limiting](#rate-limiting)
+- [Pre-commit (Windows / PowerShell)](#pre-commit-windows--powershell)
+- [Миграции](#миграции)
+- [Production (Ubuntu 24.04 + Caddy)](#production-ubuntu-2404--caddy)
+- [Технический долг](#технический-долг)
+
 ## Структура
 
 ```
@@ -32,6 +51,7 @@ taskflow/
 │   ├── Dockerfile.prod
 │   ├── .dockerignore
 │   ├── vite.config.ts
+│   ├── package-lock.json
 │   └── package.json
 ├── deploy/
 │   ├── Caddyfile
@@ -44,6 +64,8 @@ taskflow/
 │   ├── requirements.txt
 │   ├── task_list_page.py
 │   └── test_tasks.py
+├── .pre-commit-config.yaml
+├── .nvmrc
 ├── docker-compose.yml
 ├── docker-compose.prod.yml
 ├── docker-compose.e2e.yml
@@ -86,7 +108,7 @@ cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 make up                     # docker compose up -d --build
 ```
 
-`.env` не обязателен: при его отсутствии Compose использует значения по умолчанию (`taskflow/taskflow/taskflow`). Переменные `POSTGRES_*` используются сервисом `db`; `DATABASE_URL` из `.env` нужен для локального запуска без Docker — внутри Compose backend получает отдельный `DATABASE_URL` с hostname `db`.
+`.env` не обязателен: при его отсутствии Compose использует значения по умолчанию из `docker-compose.yml`. Переменные `POSTGRES_*` используются сервисом `db`; `DATABASE_URL` из `.env` нужен для локального запуска без Docker — внутри Compose backend получает отдельный `DATABASE_URL` с hostname `db`.
 
 Если `make` не установлен:
 
@@ -118,16 +140,6 @@ docker compose up -d --build
 | `make migrate` | явно применяет `alembic upgrade head` в backend |
 
 `make test`, `make lint`, `make typecheck` и `make migrate` используют `docker compose exec`, поэтому сначала должен быть выполнен `make up`.
-
-### Миграции
-
-Автоматически при старте контейнера миграции **не выполняются**. Применить их нужно явно:
-
-```bash
-make migrate
-# или:
-docker compose exec -T backend alembic upgrade head
-```
 
 ### Данные PostgreSQL
 
@@ -222,11 +234,11 @@ npm test
 make test
 ```
 
-Backend-тесты используют отдельную БД `taskflow_test`; `conftest.py` создаёт её при необходимости через подключение к служебной БД `postgres`. В dev Compose пользователь PostgreSQL по умолчанию — superuser, поэтому прав достаточно. В production backend подключается от отдельной роли `taskflow_app` (см. раздел Production).
+Backend-тесты используют отдельную БД `taskflow_test`; `conftest.py` создаёт её при необходимости через подключение к служебной БД `postgres`. Для запуска `pytest` нужен доступный PostgreSQL — например, `docker compose up -d db` (порт `5432` публикуется на хост). В dev Compose пользователь PostgreSQL по умолчанию — superuser, поэтому прав достаточно. В production backend подключается от отдельной роли `taskflow_app` (см. раздел Production).
 
-- Backend: pytest + PostgreSQL, API, сессии, CSRF, пагинация и OpenAPI.
+- Backend: pytest + PostgreSQL, API, сессии, CSRF, rate limiting, пагинация и OpenAPI.
 - Frontend: Vitest, ESLint, `vue-tsc` и production-сборка.
-- Selenium E2E: отдельный Docker Compose-стек; тесты запускаются в CI отдельным job и не входят в `Required checks`. Подробности и команды — в `e2e/README.md`.
+- Selenium E2E: отдельный Docker Compose-стек; команды и ограничения — в `e2e/README.md`.
 
 ## CI (GitHub Actions)
 
@@ -242,7 +254,7 @@ Workflow `.github/workflows/ci.yml` запускается на `pull_request` �
 | `Selenium E2E` | отдельный `taskflow-e2e` стек, миграции и `pytest e2e` |
 | `Required checks` | агрегирует обязательные jobs |
 
-В текущем состоянии обязательные проверки проходят. **CI не выполняет deployment**; Selenium E2E запускается отдельным job и пока не входит в `Required checks`. Production secrets в CI не используются.
+Статус проверок отображается на вкладке Actions в GitHub. **CI не выполняет deployment**; Selenium E2E запускается отдельным job и не входит в `Required checks`. Production secrets в CI не используются.
 
 ## Selenium E2E
 
@@ -258,7 +270,7 @@ Workflow `.github/workflows/ci.yml` запускается на `pull_request` �
 6. удаление задачи;
 7. сохранение задачи и описания после перезагрузки.
 
-Тесты запускаются локально и в GitHub Actions отдельным job; job не входит в `Required checks`. Команды запуска, адреса и ограничения — в `e2e/README.md`.
+Тесты запускаются локально и в GitHub Actions отдельным job. Команды запуска, адреса и ограничения — в `e2e/README.md`.
 
 ## Windows / Docker Desktop
 
@@ -340,6 +352,7 @@ TTL не дублируется:
 - При превышении возвращается HTTP `429` с `Retry-After` (целое число секунд до конца окна, минимум 1); ответы `429` имеют `Cache-Control: no-store`.
 - `GET /api/v1/tasks`, `GET /api/v1/tasks/{id}`, `/health` и `/health/ready` не ограничиваются.
 - Реализация in-memory (`backend/app/core/rate_limit.py`), без Redis и внешних зависимостей. Счётчики общие только внутри одного процесса: при нескольких workers или replicas лимиты не являются общими и действуют независимо в каждом процессе.
+- IP берётся из `request.client.host`; `X-Forwarded-For` вручную не разбирается. За Caddy это работает благодаря настроенным uvicorn proxy headers (`--proxy-headers`, `--forwarded-allow-ips`).
 
 ## Pre-commit (Windows / PowerShell)
 
@@ -374,7 +387,8 @@ backend\.venv\Scripts\pre-commit.exe autoupdate
 ## Миграции
 
 Изменения схемы выполняются только через Alembic — `create_all` не используется
-вне тестов.
+вне тестов. При старте контейнера миграции не применяются автоматически; их
+нужно запускать явно (см. ниже).
 
 Локально:
 
@@ -397,7 +411,9 @@ docker compose exec -T backend alembic upgrade head
 
 В CI отдельный job `Alembic migrations` проверяет миграции на чистой PostgreSQL:
 `alembic upgrade head`, `alembic check` и `alembic current`. Он не применяет
-миграции к production; production-миграции запускаются вручную по runbook.
+миграции к production; production-миграции запускаются вручную, но способ
+запуска для обновления работающего стека требует отдельной проверки
+(см. раздел «Обновление»).
 
 `env.py` берёт URL из `app.core.config.settings` (`DATABASE_URL`), поэтому
 в `alembic.ini` нет учётных данных. В контейнере `DATABASE_URL` указывает на
@@ -434,7 +450,7 @@ Production-режим (`APP_ENV=production`, `APP_DEBUG=false`) задаётся
 - `deploy/Caddyfile`;
 - `deploy/postgres/init-app-role.sh`;
 - `.env.prod` (создаётся из `.env.prod.example`, в Git не попадает);
-- архив образов `taskflow-images.tar.gz` или `taskflow-images.tar`.
+- архив образов `taskflow-images.tar`.
 
 Если собирать образы прямо на сервере, нужен весь репозиторий (`backend/`, `frontend/` и остальные файлы).
 
@@ -482,7 +498,7 @@ Linux / WSL / Git Bash:
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.prod build
-docker save taskflow-backend:prod taskflow-frontend:prod | gzip > taskflow-images.tar.gz
+docker save -o taskflow-images.tar taskflow-backend:prod taskflow-frontend:prod
 ```
 
 PowerShell (Windows 10+):
@@ -492,7 +508,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod build
 docker save -o taskflow-images.tar taskflow-backend:prod taskflow-frontend:prod
 ```
 
-В PowerShell нет `gzip`; если нужен сжатый архив, выполните `docker save ... | gzip` в WSL или Git Bash. `docker load` понимает оба варианта.
+`docker save -o` создаёт несжатый архив `.tar` в bash и PowerShell; `docker load` читает его на сервере.
 
 ### Перенос на чистый сервер
 
@@ -509,7 +525,7 @@ sudo chown "$USER":"$USER" /opt/taskflow
 scp docker-compose.prod.yml user@server:/opt/taskflow/
 scp -r deploy user@server:/opt/taskflow/
 scp .env.prod user@server:/opt/taskflow/
-scp taskflow-images.tar.gz user@server:/opt/taskflow/
+scp taskflow-images.tar user@server:/opt/taskflow/
 ```
 
 PowerShell:
@@ -530,15 +546,13 @@ scp .\taskflow-images.tar user@server:/opt/taskflow/
 cd /opt/taskflow
 chmod 600 .env.prod
 chmod 755 deploy/postgres/init-app-role.sh
-docker load -i taskflow-images.tar.gz
-# если переносили несжатый архив:
-# docker load -i taskflow-images.tar
+docker load -i taskflow-images.tar
 docker compose -f docker-compose.prod.yml --env-file .env.prod config --quiet
 ```
 
 `chmod 755` делает init-скрипт читаемым и исполняемым для пользователя контейнера PostgreSQL. Если файл не исполняемый, официальный entrypoint выполнит его через `source`; скрипт безопасен для обоих режимов. Права `600` на init-скрипт не подходят: пользователь `postgres` внутри контейнера не сможет его прочитать.
 
-Файл, скопированный из Windows, может иметь Git mode `100644` без исполняемого бита — это не мешает запуску через `source`. `chmod 755` на сервере гарантирует и чтение, и возможность прямого запуска. Проверить права можно через `ls -l deploy/postgres/init-app-role.sh`; Compose монтирует файл в `/docker-entrypoint-initdb.d/01-app-role.sh` (см. вывод `docker compose -f docker-compose.prod.yml --env-file .env.prod config`).
+Файл, скопированный из Windows, может иметь Git mode `100644` без исполняемого бита — это не мешает запуску через `source`. `chmod 755` на сервере гарантирует и чтение, и возможность прямого запуска. Проверить права можно через `ls -l deploy/postgres/init-app-role.sh`; Compose монтирует файл в `/docker-entrypoint-initdb.d/01-app-role.sh` (см. `volumes` сервиса `db` в `docker-compose.prod.yml`).
 
 ### Первый запуск
 
@@ -590,10 +604,29 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f --tail=10
 
 ### Обновление
 
-Бэкап выполняется на Ubuntu-сервере в bash. PowerShell-варианта backup в этом разделе нет.
+**Ограничение:** обновление с новыми миграциями в текущем workflow не описано. На работающем стеке команда `docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm backend alembic upgrade head` завершается ошибкой `Address already in use`: одноразовый backend-контейнер претендует на статический IP `172.30.0.11`, который уже занят запущенным `backend`. `docker compose exec backend alembic upgrade head` не подходит, потому что использует старый образ, а не новый. Надёжный способ применить миграции нового образа без изменения Compose/Dockerfile в этом README не подтверждён.
+
+Перед обновлением, которое содержит новые миграции, остановитесь и отдельно проверьте способ их запуска. Не считайте миграции применёнными, пока это не подтверждено. Команда из раздела «Первый запуск» предназначена для случая, когда `backend` ещё не запущен.
+
+Сначала сделайте бэкап по разделу «Backup и restore»; если он завершился ошибкой, дальше не переходите.
+
+Обновление без новых миграций:
 
 ```bash
-# 1. Бэкап БД
+# 1. Новые образы (собранные локально и перенесённые, или build на сервере)
+docker load -i taskflow-images.tar
+
+# 2. Перезапуск приложения
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d backend web
+```
+
+Если образы собираются на сервере, вместо `docker load` выполните `docker compose -f docker-compose.prod.yml --env-file .env.prod build backend web`.
+
+### Backup и restore
+
+Backup выполняется вручную через `pg_dump` внутри контейнера `db` с переменными из `.env.prod`. Команды рассчитаны на bash на Ubuntu-сервере; блок ниже удаляет неполный или повреждённый файл и завершается с non-zero:
+
+```bash
 (
   set -o pipefail
 
@@ -612,34 +645,6 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f --tail=10
     echo "Backup created and gzip-verified: $backup"
   fi
 )
-
-# 2. Новые образы (собранные локально и перенесённые, или build на сервере)
-docker load -i taskflow-images.tar.gz
-
-# 3. Миграции
-docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm backend alembic upgrade head
-
-# 4. Перезапуск приложения
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d backend web
-```
-
-Если backup-команда вернула non-zero, остановитесь: не переходите к шагу 2. `gzip -t` проверяет только целостность gzip-контейнера, а не полноту и корректность SQL-дампа; периодически проверяйте восстановление на отдельной БД.
-
-Старый backend продолжает работать во время шага 3. Для текущей additive-миграции это безопасно; для будущих миграций с удалением или переименованием колонок используйте maintenance window или схему expand/contract. При несовместимых миграциях сначала проверьте их на копии БД; при необходимости используйте `alembic downgrade` по согласованному плану.
-
-### Backup и restore
-
-Backup выполняется вручную через `pg_dump` внутри контейнера `db` с `.env.prod`; подробный безопасный блок с `pipefail` приведён в разделе «Обновление» выше. Кратко:
-
-```bash
-set -o pipefail
-
-backup="backup-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-
-docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T db \
-  sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup"
-
-gzip -t "$backup"
 ```
 
 `gzip -t` проверяет только целостность gzip-контейнера. Он **не проверяет**, что дамп можно восстановить или что данные полны; для этого нужен отдельный restore drill.
@@ -738,9 +743,9 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d backend
 | Низкий | `PATCH` с пустым телом — no-op; поведение не описано в ТЗ | Уточнить на этапе frontend |
 | Низкий | `updated_at` использует `now()` (время транзакции), а не `clock_timestamp()` | При необходимости точных меток |
 | Низкий | 401 не сбрасывает устаревшую cookie — браузер шлёт её до истечения `Max-Age` | Полировка перед сдачей |
-| Средний | Rate limiting реализован in-memory: счётчики общие только внутри одного процесса. При нескольких workers/replicas лимиты не являются общими, а `GET /api/v1/tasks` и health endpoints не ограничиваются | При масштабировании на несколько workers/replicas |
+| Средний | Rate limiting реализован in-memory: счётчики не синхронизируются между процессами. При нескольких workers/replicas лимиты действуют независимо в каждом процессе | При масштабировании на несколько workers/replicas |
 | Средний | CD: автоматический deploy после merge в `main` не реализован. CI уже настроен в `.github/workflows/ci.yml` и выполняет только проверки | После стабилизации CI |
-| Средний | Selenium E2E: базовые 7 сценариев реализованы, проходят локально и в CI отдельным job, но job не входит в `Required checks` и не покрывает пагинацию/редактирование | После стабилизации E2E |
+| Средний | Selenium E2E: базовые 7 сценариев реализованы и запускаются локально и в CI отдельным job, но job не входит в `Required checks` и не покрывает пагинацию/редактирование | После стабилизации E2E |
 | Средний | Фильтры, сортировка и пагинация не синхронизированы с query-параметрами Vue Router | Этап интеграции UI с router |
 | Низкий | Нет optimistic updates: после каждой успешной мутации список перезапрашивается — осознанный выбор ради консистентности offset-пагинации | Можно оставить для MVP |
 | Низкий | Устаревшие ответы `fetchTasks()` отбрасываются по sequence, но HTTP-запросы не отменяются (нет AbortController) | Этап оптимизации после MVP |
