@@ -613,6 +613,42 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d backend web
 
 Старый backend продолжает работать во время шага 3. Для текущей additive-миграции это безопасно; для будущих миграций с удалением или переименованием колонок используйте maintenance window или схему expand/contract. При несовместимых миграциях сначала проверьте их на копии БД; при необходимости используйте `alembic downgrade` по согласованному плану.
 
+### Backup и restore
+
+Backup выполняется вручную через `pg_dump` внутри контейнера `db` с `.env.prod`; подробный безопасный блок с `pipefail` приведён в разделе «Обновление» выше. Кратко:
+
+```bash
+set -o pipefail
+
+backup="backup-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+
+docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T db \
+  sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup"
+
+gzip -t "$backup"
+```
+
+`gzip -t` проверяет только целостность gzip-контейнера. Он **не проверяет**, что дамп можно восстановить или что данные полны; для этого нужен отдельный restore drill.
+
+Restore plain SQL-дампа выполняется через `gunzip -c` (или `gzip -dc`) и `psql` на отдельном тестовом PostgreSQL 16:
+
+```bash
+gunzip -c "$backup" | psql -v ON_ERROR_STOP=1 "$TEST_DATABASE_URL"
+```
+
+Если дамп содержит `ALTER ... OWNER TO taskflow_app`, роль `taskflow_app` должна быть создана в тестовом кластере **до** restore: `pg_dump` не включает глобальные роли.
+
+Восстанавливайте только в отдельную тестовую БД. **Нельзя** выполнять тестовый restore поверх production DB или в ту же production-базу. Используйте отдельный PostgreSQL 16 и тестовые credentials; production `.env.prod` для restore не применяйте.
+
+#### Результат restore drill
+
+Проверка выполнена на PostgreSQL 16.16:
+
+- восстановлены таблицы `alembic_version`, `sessions`, `tasks`;
+- в восстановленной БД: 2 задачи и 8 сессий;
+- Alembic revision: `16fdbe2ccbcc`;
+- восстановление завершилось без ошибок.
+
 ### Остановка и данные
 
 ```bash
