@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session as DbSession
 
 from app.api.deps import get_current_session, require_csrf
+from app.core.rate_limit import task_create_rate_limit, task_mutation_rate_limit
 from app.db.session import get_db
 from app.models.session import Session
 from app.schemas.task import (
@@ -38,7 +39,7 @@ def list_tasks(
     task_status: TaskStatus = Query(TaskStatus.ALL, alias="status"),
     sort: TaskSort = Query(TaskSort.CREATED_AT),
     order: TaskOrder = Query(TaskOrder.DESC),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(5, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> TaskList:
     # `sort` is validated for the API contract; created_at is the only
@@ -64,7 +65,7 @@ def list_tasks(
     "",
     response_model=TaskRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_csrf)],
+    dependencies=[Depends(task_create_rate_limit), Depends(require_csrf)],
 )
 def create_task(
     payload: TaskCreate,
@@ -90,7 +91,7 @@ def get_task(
 @router.patch(
     "/{task_id}",
     response_model=TaskRead,
-    dependencies=[Depends(require_csrf)],
+    dependencies=[Depends(task_mutation_rate_limit), Depends(require_csrf)],
 )
 def update_task(
     task_id: int,
@@ -107,7 +108,7 @@ def update_task(
 @router.delete(
     "/{task_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_csrf)],
+    dependencies=[Depends(task_mutation_rate_limit), Depends(require_csrf)],
 )
 def delete_task(
     task_id: int,

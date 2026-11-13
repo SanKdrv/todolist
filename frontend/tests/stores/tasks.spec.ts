@@ -72,7 +72,7 @@ describe('initial state', () => {
 
     expect(store.items).toEqual([])
     expect(store.total).toBe(0)
-    expect(store.limit).toBe(20)
+    expect(store.limit).toBe(5)
     expect(store.offset).toBe(0)
     expect(store.statusFilter).toBe('all')
     expect(store.sort).toBe('created_at')
@@ -101,7 +101,7 @@ describe('fetchTasks', () => {
       status: 'all',
       sort: 'created_at',
       order: 'desc',
-      limit: 20,
+      limit: 5,
       offset: 0,
     })
     expect(store.items).toEqual([task])

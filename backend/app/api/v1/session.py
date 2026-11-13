@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps import SessionContext, get_session_context
+from app.core.rate_limit import session_rate_limit
 from app.schemas.session import SessionRead
 
 router = APIRouter(tags=["session"])
@@ -10,6 +11,7 @@ router = APIRouter(tags=["session"])
     "/session",
     response_model=SessionRead,
     summary="Get or create the anonymous browser session",
+    dependencies=[Depends(session_rate_limit)],
 )
 def read_session(
     context: SessionContext = Depends(get_session_context),

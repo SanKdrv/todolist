@@ -11,6 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session as DbSession
 
 import app.models  # registers mappers on Base.metadata
+from app.core import rate_limit
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
@@ -77,6 +78,10 @@ def db_session(engine: Engine) -> Iterator[DbSession]:
 
 @pytest.fixture()
 def client(db_session: DbSession) -> Iterator[TestClient]:
+    # All API tests share the same TestClient host, so reset the process-local
+    # limiter explicitly to keep counters independent between tests.
+    rate_limit.limiter.reset()
+
     def override_get_db() -> Iterator[DbSession]:
         yield db_session
 

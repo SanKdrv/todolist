@@ -32,7 +32,7 @@ import type {
   TaskUpdate,
 } from '@/types/task'
 
-const DEFAULT_LIMIT = 20
+const DEFAULT_LIMIT = 5
 
 /**
  * Highest offset that can still contain rows for the given total.

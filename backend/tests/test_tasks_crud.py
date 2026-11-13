@@ -39,7 +39,7 @@ def test_list_returns_own_tasks(client: TestClient) -> None:
 
     assert body["total"] == 2
     assert len(body["items"]) == 2
-    assert body["limit"] == 20
+    assert body["limit"] == 5
     assert body["offset"] == 0
     assert body["has_more"] is False
 
