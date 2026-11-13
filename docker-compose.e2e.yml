@@ -1,0 +1,84 @@
+name: taskflow-e2e
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: taskflow_e2e
+      POSTGRES_PASSWORD: taskflow_e2e
+      POSTGRES_DB: taskflow_e2e
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U taskflow_e2e -d taskflow_e2e"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - taskflow-e2e
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    image: taskflow-backend:e2e
+    environment:
+      APP_ENV: test
+      APP_DEBUG: "false"
+      DATABASE_URL: postgresql+psycopg://taskflow_e2e:taskflow_e2e@db:5432/taskflow_e2e
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - taskflow-e2e
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    image: taskflow-frontend:e2e
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./deploy/Caddyfile.e2e:/etc/caddy/Caddyfile:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - taskflow-e2e
+
+  selenium:
+    image: selenium/standalone-chrome:4.29.0-20250222
+    shm_size: 2gb
+    environment:
+      SE_NODE_MAX_SESSIONS: "1"
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "4444:4444"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4444/wd/hub/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - taskflow-e2e
+
+networks:
+  taskflow-e2e:
+    driver: bridge
