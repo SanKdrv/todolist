@@ -87,6 +87,49 @@ describe('TaskItem', () => {
     expect(wrapper.get('.task-toggle').attributes('aria-pressed')).toBe('false')
   })
 
+  it('renders the description below the title', () => {
+    const pinia = createTestPinia()
+    const task = makeTask({ description: 'Две бутылки' })
+
+    const wrapper = mountItem(task, pinia)
+
+    const content = wrapper.get('.task-content')
+    expect(content.get('.task-title').text()).toBe('Купить молоко')
+    expect(content.get('.task-description').text()).toBe('Две бутылки')
+    expect(content.element.children[0]).toBe(content.get('.task-title').element)
+    expect(content.element.children[1]).toBe(content.get('.task-description').element)
+  })
+
+  it('does not render a null or empty description', () => {
+    const pinia = createTestPinia()
+
+    for (const description of [null, '']) {
+      const wrapper = mountItem(makeTask({ description }), pinia)
+      expect(wrapper.find('.task-description').exists()).toBe(false)
+    }
+  })
+
+  it('renders long and multiline descriptions without breaking the item structure', () => {
+    const pinia = createTestPinia()
+    const longText = `${'a'.repeat(500)}\n${'b'.repeat(500)}`
+
+    const wrapper = mountItem(makeTask({ description: longText }), pinia)
+
+    expect(wrapper.get('.task-description').element.textContent).toBe(longText)
+    expect(wrapper.get('.task-content').findAll('.task-description')).toHaveLength(1)
+    expect(wrapper.get('.task-title').text()).toBe('Купить молоко')
+    expect(wrapper.find('.task-toggle').exists()).toBe(true)
+    expect(wrapper.find('.task-delete').exists()).toBe(true)
+  })
+
+  it('keeps the description visible for a completed task', () => {
+    const pinia = createTestPinia()
+    const wrapper = mountItem(makeTask({ is_completed: true, description: 'Готово' }), pinia)
+
+    expect(wrapper.classes()).toContain('is-completed')
+    expect(wrapper.get('.task-description').text()).toBe('Готово')
+  })
+
   it('renders a completed task with a pressed toggle', () => {
     const pinia = createTestPinia()
     const task = makeTask({ is_completed: true })

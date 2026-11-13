@@ -130,6 +130,20 @@ describe('TaskListView', () => {
     expect(wrapper.findAllComponents(TaskItem)).toHaveLength(2)
   })
 
+  it('renders the task description returned by the API', async () => {
+    listMock.mockResolvedValue(
+      makeList({
+        items: [makeTask({ id: 1, title: 'С описанием', description: 'Детали задачи' })],
+        total: 1,
+      }),
+    )
+
+    const { wrapper } = mountView()
+    await flushPromises()
+
+    expect(wrapper.get('.task-description').text()).toBe('Детали задачи')
+  })
+
   it('visually distinguishes completed tasks from active ones', async () => {
     listMock.mockResolvedValue(
       makeList({
@@ -219,6 +233,24 @@ describe('TaskListView', () => {
     expect(wrapper.findAll('li')).toHaveLength(1)
     expect(wrapper.text()).toContain('Новая задача')
     expect((wrapper.get('#task-title').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('shows a description entered during creation', async () => {
+    listMock.mockResolvedValueOnce(makeList())
+    const created = makeTask({ id: 5, title: 'Новая', description: 'Детали' })
+    createMock.mockResolvedValueOnce(created)
+    listMock.mockResolvedValueOnce(makeList({ items: [created], total: 1 }))
+
+    const { wrapper } = mountView()
+    await flushPromises()
+
+    await wrapper.get('#task-title').setValue('Новая')
+    await wrapper.get('#task-description').setValue('Детали')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(createMock).toHaveBeenCalledWith({ title: 'Новая', description: 'Детали' })
+    expect(wrapper.get('.task-description').text()).toBe('Детали')
   })
 
   it('does not resubmit when a successful create is followed by a failed refetch', async () => {

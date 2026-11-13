@@ -52,7 +52,15 @@ function remove(): void {
       >✓</span>
     </button>
 
-    <span class="task-title">{{ task.title }}</span>
+    <div class="task-content">
+      <span class="task-title">{{ task.title }}</span>
+      <p
+        v-if="task.description"
+        class="task-description"
+      >
+        {{ task.description }}
+      </p>
+    </div>
 
     <span
       v-if="isPending"

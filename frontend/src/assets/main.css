@@ -317,6 +317,14 @@ select {
   border-radius: var(--radius);
 }
 
+.task-content {
+  flex: 1 1 8rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
 .task-toggle {
   flex: none;
   display: inline-flex;
@@ -527,9 +535,16 @@ select {
 }
 
 .task-title {
-  flex: 1 1 8rem;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.task-description {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .task-item.is-completed .task-title {
